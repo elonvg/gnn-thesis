@@ -31,7 +31,7 @@ import pandas as pd
 def plot_metals(df):
     # List of common metals
     metals = [
-        'Al', 'As', 'Ba', 'Ca', 'Cd', 'Co', 'Cr', 'Cu', 'Fe', 'Hg', 
+        'Ag','Al', 'As', 'Ba', 'Ca', 'Cd', 'Co', 'Cr', 'Cu', 'Fe', 'Hg', 
         'K', 'Li', 'Mg', 'Mn', 'Na', 'Ni', 'Pb', 'Pt', 'Sn', 'Zn', 'Sb'
     ]
     
