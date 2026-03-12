@@ -39,4 +39,7 @@ def preprocess(df):
     # Remove metals
     df = df[~df['SMILES'].apply(has_metal)].reset_index(drop=True)
 
+    # Log-transform concentrations, set non-positive values to NaN
+    df['conc'] = df['conc'].apply(lambda x: np.log10(x) if x > 0 else np.nan)
+    
     return df
