@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
 
@@ -7,7 +8,8 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
 
     train_losses = []
     test_losses = []
-
+    print("lessgo2")
+    
     for epoch in range(epochs):
         model.fit(train_dataset, nb_epoch=1)
         train_loss = get_loss(model, train_dataset, loss_fn)
@@ -15,7 +17,7 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
 
         test_loss = get_loss(model, test_dataset, loss_fn)
         test_losses.append(test_loss)
-        print("lessgo")
+        
         if epoch % 10 == 0:
             print(f"Epoch {epoch}: Train Loss = {train_loss}, Test Loss = {test_loss}")
             
@@ -29,8 +31,11 @@ def get_loss(model, dataset, loss_fn=None):
     if loss_fn is None:
         loss_fn = torch.nn.MSELoss()  # Default to MSE for regression tasks
 
-    X = torch.tensor(dataset.X, dtype=torch.float32)
-    y = torch.tensor(dataset.y, dtype=torch.float32)
+    # X = torch.tensor(dataset.X, dtype=torch.float32)
+    # y = torch.tensor(dataset.y, dtype=torch.float32)
+
+    X = torch.tensor(np.array(dataset.X, dtype=np.float32))
+    y = torch.tensor(np.array(dataset.y, dtype=np.float32))
 
     model.model.eval()
     with torch.no_grad():
