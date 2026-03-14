@@ -15,6 +15,6 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
             print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}")
             # print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Test Loss = {test_loss:.4f}")
     
-    print(f"Training complete: Train Loss = {train_loss:.4f}, Test Loss = {test_loss:.4f}")
+    print(f"Training complete: Train Loss = {train_loss:.4f}")
 
     return train_losses, test_losses
