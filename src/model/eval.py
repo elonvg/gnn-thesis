@@ -12,9 +12,9 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
         test_losses.append(test_loss)
 
         if epoch % 10 == 0:
-            print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}")
+            print(f"Epoch {epoch}: Train Loss = {train_loss}")
             # print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Test Loss = {test_loss:.4f}")
     
-    print(f"Training complete: Train Loss = {train_loss:.4f}")
+    print(f"Training complete: Train Loss = {train_loss}")
 
     return train_losses, test_losses
