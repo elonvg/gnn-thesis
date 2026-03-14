@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from rdkit import Chem
+import deepchem as dc
 
 def load_data(path, selected_columns=None, cut=None):
     # Load data
@@ -48,3 +49,20 @@ def print_mol_types(df):
     print(f"Salts: {n_salts}, {n_salts/n_mols:.2%}")
     print(f"Single atoms: {n_single_atoms}, {n_single_atoms/n_mols:.2%}")
     print(f"Metals: {n_metals}, {n_metals/n_mols:.2%}")
+
+
+
+def featurize(df, featurizer, apply_filter=False):
+
+    features = featurizer.featurize(df['SMILES'])
+
+    if apply_filter:
+        valid_ids = [i for i, f in enumerate(features) if isinstance(f, dc.feat.graph_data.GraphData)]
+        features_filtered = [features[i] for i in valid_ids]
+        df_filtered = df[df.index.isin(valid_ids)]
+        print("")
+        print(f"Org size: {len(features)}, Filtered size: {len(features_filtered)}")
+        features = features_filtered
+        df = df_filtered.reset_index(drop=True)
+
+    return np.array(features), df
