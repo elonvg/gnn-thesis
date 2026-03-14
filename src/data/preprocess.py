@@ -22,22 +22,34 @@ def keep_largest(smile):
     
     return Chem.MolToSmiles(largest) if largest else None
 
-def remove_salts(smile, remover=remover):
+def salt_remover(smile, remover=remover):
     smile = Chem.MolToSmiles(remover.StripMol(Chem.MolFromSmiles(smile), dontRemoveEverything=True), isomericSmiles=True) # Chirality??
     if '.' in smile:
         smile = keep_largest(smile)
     return smile
 
-def preprocess(df):
+def preprocess(df, remove_salts=False, remove_lone=False, remove_metals=False):
     # Remove salts and keep largest fragment
-    df['SMILES'] = df['SMILES'].apply(remove_salts)
+    if remove_salts:
+        df['SMILES'] = df['SMILES'].apply(salt_remover)
 
     # Remove lone atoms
-    is_lone_atom = (~df['SMILES'].str.contains(r'\.')) & (df['SMILES'].str.fullmatch(r'[A-Z][a-z]?'))
-    df = df[~is_lone_atom].reset_index(drop=True)
+    if remove_lone:
+        is_lone_atom = (~df['SMILES'].str.contains(r'\.')) & (df['SMILES'].str.fullmatch(r'[A-Z][a-z]?'))
+        df = df[~is_lone_atom].reset_index(drop=True)
 
     # Remove metals
-    df = df[~df['SMILES'].apply(has_metal)].reset_index(drop=True)
+    if remove_metals:
+        df = df[~df['SMILES'].apply(has_metal)].reset_index(drop=True)
+
+    # Convert conc to log10 
+    df = preprocess_conc(df)
+    
+    return df
+
+def preprocess_conc(df):
+
+    # TODO: Handle different concentration units
 
     # Log-transform concentrations, set non-positive values to NaN
     df['conc'] = df['conc'].apply(lambda x: np.log10(x) if x > 0 else np.nan)
