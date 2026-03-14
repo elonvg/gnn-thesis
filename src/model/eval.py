@@ -29,20 +29,3 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
     print(f"Training complete: Train Loss = {train_loss}")
 
     return train_losses, test_losses
-
-def get_loss(model, dataset, loss_fn=None):
-    if loss_fn is None:
-        loss_fn = torch.nn.MSELoss()  # Default to MSE for regression tasks
-
-    # X = torch.tensor(dataset.X, dtype=torch.float32)
-    # y = torch.tensor(dataset.y, dtype=torch.float32)
-
-    X = torch.tensor(np.array(dataset.X, dtype=np.float32))
-    y = torch.tensor(np.array(dataset.y, dtype=np.float32))
-
-    model.model.eval()
-    with torch.no_grad():
-        y_pred = model.model(dataset)
-        loss = loss_fn(y_pred, y)
-
-    return loss.item()

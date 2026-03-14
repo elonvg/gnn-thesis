@@ -64,8 +64,8 @@ def plot_metals(df):
 
 def plot_training(train_losses, test_losses, figsize=[10, 6]):
     plt.figure(figsize=figsize)
-    plt.plot(train_losses, label='Train Loss', marker='o')
-    plt.plot(test_losses, label='Test Loss', marker='o')
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(test_losses, label='Test Loss')
     plt.title('Training and Test Loss Over Epochs')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
