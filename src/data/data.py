@@ -33,7 +33,7 @@ def has_metal(smiles):
             return True
     return False
 
-def mol_types(df):
+def print_mol_types(df):
     n_mols = len(df)
     n_unique_mols = df['SMILES'].nunique()
     n_salts = df['SMILES'].str.contains(r'\.').sum()

@@ -28,9 +28,9 @@ def salt_remover(smile, remover=remover):
         smile = keep_largest(smile)
     return smile
 
-def preprocess(df, remove_salts=False, remove_lone=False, remove_metals=False):
+def preprocess(df, split_salts=False, remove_lone=False, remove_metals=False):
     # Remove salts and keep largest fragment
-    if remove_salts:
+    if split_salts:
         df['SMILES'] = df['SMILES'].apply(salt_remover)
 
     # Remove lone atoms
