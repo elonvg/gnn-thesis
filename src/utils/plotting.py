@@ -25,10 +25,8 @@ def plot_smiles(df, figsize=[12, 6]):
     plt.tight_layout()
     plt.show()
 
-import matplotlib.pyplot as plt
-import pandas as pd
-
 def plot_metals(df):
+
     # List of common metals
     metals = [
         'Ag','Al', 'As', 'Ba', 'Ca', 'Cd', 'Co', 'Cr', 'Cu', 'Fe', 'Hg', 
@@ -61,4 +59,17 @@ def plot_metals(df):
     
     plt.tight_layout()
     plt.savefig('metal_distribution.png') # Saves the plot in your project folder
+    plt.show()
+
+
+def plot_training(train_losses, test_losses, figsize=[10, 6]):
+    plt.figure(figsize=figsize)
+    plt.plot(train_losses, label='Train Loss', marker='o')
+    plt.plot(test_losses, label='Test Loss', marker='o')
+    plt.title('Training and Test Loss Over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid()
+    plt.tight_layout()
     plt.show()
