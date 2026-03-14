@@ -1,14 +1,19 @@
 import torch
 
 def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
+
+    if loss_fn is None:
+        loss_fn = torch.nn.MSELoss()  # Default to MSE for regression tasks
+
     train_losses = []
     test_losses = []
 
     for epoch in range(epochs):
-        train_loss = model.fit(train_dataset, nb_epoch=1)
+        model.fit(train_dataset, nb_epoch=1)
+        train_loss = get_loss(model, train_dataset, loss_fn)
         train_losses.append(train_loss)
 
-        test_loss = model.evaluate(test_dataset, metrics=[], per_task_metrics=False)
+        test_loss = get_loss(model, test_dataset, loss_fn)
         test_losses.append(test_loss)
 
         if epoch % 10 == 0:
@@ -18,3 +23,17 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
     print(f"Training complete: Train Loss = {train_loss}")
 
     return train_losses, test_losses
+
+def get_loss(model, dataset, loss_fn=None):
+    if loss_fn is None:
+        loss_fn = torch.nn.MSELoss()  # Default to MSE for regression tasks
+
+    X = torch.tensor(dataset.X, dtype=torch.float32)
+    y = torch.tensor(dataset.y, dtype=torch.float32)
+
+    model.model.eval()
+    with torch.no_grad():
+        y_pred = model.model(dataset)
+        loss = loss_fn(y_pred, y)
+
+    return loss.item()
