@@ -8,7 +8,7 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
         train_loss = model.fit(train_dataset, nb_epoch=1)
         train_losses.append(train_loss)
 
-        test_loss = model.evaluate(test_dataset)
+        test_loss = model.evaluate(test_dataset, metrics=[], per_task_metrics=False)
         test_losses.append(test_loss)
 
         if epoch % 10 == 0:
