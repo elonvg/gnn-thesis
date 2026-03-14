@@ -15,9 +15,10 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
 
         test_loss = get_loss(model, test_dataset, loss_fn)
         test_losses.append(test_loss)
-
+        print("lessgo")
         if epoch % 10 == 0:
             print(f"Epoch {epoch}: Train Loss = {train_loss}, Test Loss = {test_loss}")
+            
             # print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Test Loss = {test_loss:.4f}")
     
     print(f"Training complete: Train Loss = {train_loss}")
