@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from deepchem.metrics import Metric
 import deepchem.metrics as metrics
+import pandas as pd
 
 def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
     print("lessgo4")
@@ -29,3 +30,27 @@ def train(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
     print(f"Training complete: Train Loss = {train_loss}")
 
     return train_losses, test_losses
+
+
+def predict(model, dataset, df):
+  # Function for using model to predict toxicity
+  # Returns a dataframe with org and predictions
+
+  predictions = model.predict(dataset)
+  actuals = dataset.y
+
+  # Create dataframe
+  df_results = pd.DataFrame({
+        'SMILES' : df['SMILES'].values,
+        'Actual': actuals.flatten(),
+        'Predicted': predictions.flatten()
+    })
+
+  # Convert conc back
+  df_results['Actual'] = df_results['Actual'].apply(lambda x: 10**x if pd.notnull(x) else np.nan)
+  df_results['Predicted'] = df_results['Predicted'].apply(lambda x: 10**x if pd.notnull(x) else np.nan)
+
+  # Calc error
+  df_results['Abs_Error'] = (df_results['Actual'] - df_results['Predicted']).abs()
+
+  return df_results
