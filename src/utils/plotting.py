@@ -62,11 +62,11 @@ def plot_metals(df):
     plt.show()
 
 
-def plot_training(train_losses, test_losses, figsize=[10, 6]):
+def plot_training(history, figsize=[10, 6]):
     plt.figure(figsize=figsize)
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(test_losses, label='Test Loss')
-    plt.title('Training and Test Loss')
+    plt.plot(history['train_loss'], label='Train Loss')
+    plt.plot(history['val_loss'], label='Validation Loss')
+    plt.title('Training and Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
