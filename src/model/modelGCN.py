@@ -53,14 +53,12 @@ class ToxGNN(nn.Module):
     def __init__(
             self, 
             mol_dim=9,
-            edge_dim=3,
             meta_dim=None, 
-            num_species=None, 
             hidden_dim=64
             ):
         super().__init__()
 
-        self.gnn = GNN(mol_dim, hidden_dim)
+        self.gnn = GCN(mol_dim, hidden_dim)
 
         # self.meta_encoder = MetaLinear(meta_dim, num_species, hidden_dim=64)
         if meta_dim is not None:
@@ -87,7 +85,7 @@ class ToxGNN(nn.Module):
         return out
 
 
-class GNN(nn.Module):
+class GCN(nn.Module):
     def __init__(
             self, 
             mol_dim=9, 
