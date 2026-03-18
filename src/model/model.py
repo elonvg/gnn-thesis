@@ -50,13 +50,14 @@ class ToxicityGNN(nn.Module):
 
 
 class ToxGNN(nn.Module):
-    def __init__(self, 
-                mol_dim=9,
-                edge_dim=3,
-                meta_dim=None, 
-                num_species=None, 
-                hidden_dim=64
-                ):
+    def __init__(
+            self, 
+            mol_dim=9,
+            edge_dim=3,
+            meta_dim=None, 
+            num_species=None, 
+            hidden_dim=64
+            ):
         super().__init__()
 
         self.gnn = GNN(mol_dim, hidden_dim)
@@ -85,12 +86,14 @@ class ToxGNN(nn.Module):
         
         return out
 
+
 class GNN(nn.Module):
-    def __init__(self, 
-                 mol_dim=9, 
-                 edge_dim=3,
-                 hidden_dim=64
-                 ):
+    def __init__(
+            self, 
+            mol_dim=9, 
+            edge_dim=3,
+            hidden_dim=64
+            ):
         super().__init__()
 
         # self.atom_encoder = nn.Embedding(120, 32) # Assuming atomic numbers up to 120 -> embed to 32-dim vectors
@@ -114,6 +117,7 @@ class GNN(nn.Module):
         x_max = global_max_pool(x, batch) # Max pooling captures most prominent information
 
         return torch.cat([x_mean, x_max], dim=1)
+
 
 class MetaLinear(nn.Module):
     def __init__(self, meta_dim, num_species, hidden_dim=64):
