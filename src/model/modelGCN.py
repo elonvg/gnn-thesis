@@ -117,24 +117,3 @@ class GNN(nn.Module):
         x_max = global_max_pool(x, batch) # Max pooling captures most prominent information
 
         return torch.cat([x_mean, x_max], dim=1)
-
-
-class MetaLinear(nn.Module):
-    def __init__(self, meta_dim, num_species, hidden_dim=64):
-        super().__init__()
-
-        self.species_embedding = nn.Embedding(num_species, 16)
-
-        self.meta_encoder = nn.Sequential(
-            nn.Linear(meta_dim, hidden_dim),
-            nn.ReLU()
-        )
-
-    def forward(self, metadata, species_id):
-        x = self.meta_encoder(metadata)
-        species_embed = self.species_embedding(species_id)
-
-        return torch.cat([x, species_embed], dim=1)
-
-
-

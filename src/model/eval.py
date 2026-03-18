@@ -77,14 +77,9 @@ def evaluate(model, loader, loss_fn, device):
 
     return avg_loss, rmse, mae
 
-def train(model, train_loader, test_loader, loss_fn, optimizer, epochs=100, device='cpu'):
+def train(model, train_loader, test_loader, loss_fn, optimizer, scheduler, epochs=100, device='cpu'):
     
     model = model.to(device)
-
-    # Halves the learning rate if validation loss doesn't improve for 10 epochs
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=10, factor=0.5
-    )
 
     best_val_loss = float('inf')
     best_model_state = None
