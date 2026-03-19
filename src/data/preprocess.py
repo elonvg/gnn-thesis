@@ -4,7 +4,7 @@ from rdkit.Chem.SaltRemover import SaltRemover
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 
-from .data import has_metal
+from .dataMol import has_metal
 
 remover = SaltRemover()
 
@@ -52,6 +52,6 @@ def preprocess_conc(df):
     # TODO: Handle different concentration units
 
     # Log-transform concentrations, set non-positive values to NaN
-    df['conc'] = df['conc'].apply(lambda x: np.log10(x) if x > 0 else np.nan)
+    df['log10c'] = df['conc'].apply(lambda x: np.log10(x))
     
     return df

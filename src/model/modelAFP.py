@@ -85,13 +85,13 @@ class AttentiveFP(torch.nn.Module):
     """
     def __init__(
         self,
-        in_channels: int,
-        hidden_channels: int,
-        out_channels: int,
-        edge_dim: int,
-        num_layers: int,
-        num_timesteps: int,
-        dropout: float = 0.0,
+        in_channels=9,
+        edge_dim=3,
+        hidden_channels=64,
+        out_channels=64,
+        num_layers=3,
+        num_timesteps=2,
+        dropout: float = 0.2,
     ):
         super().__init__()
 

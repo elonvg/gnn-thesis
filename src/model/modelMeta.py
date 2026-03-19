@@ -22,14 +22,12 @@ class TaxonomyEncoder(nn.Module):
             nn.Dropout(0.1)
         )
 
-    def forward(self, tax_seq_dict):
-        
-        # tax_seq_dict: A dict of tensors mapping feature_tax -> sequence of IDs for that feature
+    def forward(self, data):
         
         embedded_list = []
         for col, emb_layer in self.embeddings.items():
-            # Get the IDs for this specific taxonomic rank
-            ids = tax_seq_dict[col]
+            # Get the IDs for the taxonomic ranks
+            ids = getattr(data, col)  # Assuming data has attributes like data.taxid, data.genus, etc.
             embedded_list.append(emb_layer(ids))
         
         # Concatenate all embeddings into one vector

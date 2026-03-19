@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 
 class ToxicityModel(nn.Module):
-    def __init__(self, mol_encoder, meta_encoder, hidden_dim):
+    def __init__(self, gnn, encoder_tax, hidden_dim):
         super().__init__()
-        self.mol_encoder = mol_encoder  # plug in a GNN-based encoder here
-        self.meta_encoder = meta_encoder
+
+        self.gnn = gnn  # plug in a GNN-based encoder here
+        self.encoder_tax = encoder_tax
         
         self.predictor = nn.Sequential(
             nn.Linear(hidden_dim * 2, 64),  # mol + meta
@@ -14,9 +15,9 @@ class ToxicityModel(nn.Module):
             nn.Linear(64, 1)
         )
     
-    def forward(self, data, metadata):
+    def forward(self, data):
         
-        mol_embed = self.mol_encoder(data)
-        meta_embed = self.meta_encoder(metadata)
+        mol_embed = self.gnn(data)
+        meta_embed = self.encoder_tax(data)
 
         return self.predictor(torch.cat([mol_embed, meta_embed], dim=1))
