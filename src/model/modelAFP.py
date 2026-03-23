@@ -1,6 +1,7 @@
 from typing import Optional
 
 import torch
+from torch import nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.nn import GRUCell, Linear, Parameter
@@ -125,8 +126,6 @@ class AttentiveFP(torch.nn.Module):
 
         self.lin2 = Linear(hidden_channels, out_channels)
 
-        self.reset_parameters()
-
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
         self.lin1.reset_parameters()
@@ -142,7 +141,7 @@ class AttentiveFP(torch.nn.Module):
 
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
-  
+
         # Atom Embedding:
         x = F.leaky_relu_(self.lin1(x))
 
