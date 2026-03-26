@@ -9,6 +9,7 @@ from collections import defaultdict
 from sklearn.model_selection import StratifiedKFold
 from rdkit.Chem import AllChem
 import hashlib
+from skfp.model_selection import butina_train_test_split
 
 # def generate_scaffold(smiles, include_chirality=False):
 #     scaffold = MurckoScaffold.MurckoScaffoldSmiles(smiles=smiles, includeChirality=include_chirality)
@@ -123,3 +124,20 @@ def scaffold_split_ac(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0, s
     val_dataset = [features[i] for i in val_indices]
 
     return train_dataset, test_dataset, val_dataset
+
+
+def butina_split(features):
+
+    smiles_list = [g.smiles for g in features]
+    y_list = [g.y for g in features]
+
+    smiles_train, smiles_test, y_train, y_test = butina_train_test_split(smiles_list, y_list)
+
+    smiles_idx = {smile: i for i, smile in enumerate(smiles_list)}
+    train_indices = [smiles_idx[smile] for smile in smiles_train]
+    test_indices = [smiles_idx[smile] for smile in smiles_test]
+
+    train_dataset = [features[i] for i in train_indices]
+    test_dataset = [features[i] for i in test_indices]
+
+    return train_dataset, test_dataset
