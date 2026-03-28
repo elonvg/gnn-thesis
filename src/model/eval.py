@@ -5,34 +5,6 @@ import deepchem.metrics as metrics
 import pandas as pd
 import copy
 
-
-def train_dc(model, train_dataset, test_dataset, loss_fn=None, epochs=100):
-    print("lessgo4")
-    if loss_fn is None:
-        loss_fn = torch.nn.MSELoss()  # Default to MSE for regression tasks
-
-    metric = Metric(metrics.mean_squared_error)
-    train_losses = []
-    test_losses = []
-    
-    for epoch in range(epochs):
-        train_loss = model.fit(train_dataset, nb_epoch=1)
-        
-        test_scores = model.evaluate(test_dataset, metrics=[metric])
-        test_loss = test_scores['mean_squared_error']
-        
-        train_losses.append(train_loss)
-        test_losses.append(test_loss)
-        
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch}: Train Loss = {train_loss}, Test Loss = {test_loss}")
-            
-            # print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Test Loss = {test_loss:.4f}")
-    
-    print(f"Training complete: Train Loss = {train_loss}")
-
-    return train_losses, test_losses
-
 def train_epoch(model, loader, optimizer, loss_fn, device):
     model.train()
     total_loss = 0
@@ -67,8 +39,11 @@ def evaluate(model, loader, loss_fn, device):
             loss = loss_fn(out, batch.y)
             total_loss += loss.item()
 
-            predictions.append(out.cpu())
-            targets.append(batch.y.cpu())
+            pred_denorm = out #* target_std + target_mean
+            target_denorm = batch.y #* target_std + target_mean
+
+            predictions.append(pred_denorm.cpu())
+            targets.append(target_denorm.cpu())
     
     avg_loss = total_loss / len(loader)
 
@@ -84,26 +59,26 @@ def train(model, train_loader, test_loader, loss_fn, optimizer, scheduler, epoch
     
     model = model.to(device)
 
-    best_val_loss = float('inf')
+    best_test_loss = float('inf')
     best_model_state = None
-    history = {'train_loss': [], 'val_loss': [], 'val_rmse': [], 'val_mae': []}
+    history = {'train_loss': [], 'test_loss': [], 'test_rmse': [], 'test_mae': []}
 
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device)
-        val_loss, val_rmse, val_mae = evaluate(model, test_loader, loss_fn, device)
+        test_loss, test_rmse, test_mae = evaluate(model, test_loader, loss_fn, device)
 
         history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_loss)
-        history['val_rmse'].append(val_rmse)
-        history['val_mae'].append(val_mae)
+        history['test_loss'].append(test_loss)
+        history['test_rmse'].append(test_rmse)
+        history['test_mae'].append(test_mae)
 
-        scheduler.step(val_loss)
+        scheduler.step(test_loss)
 
         if epoch % 10 == 0:
-            print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+            print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Test Loss = {test_loss:.4f}")
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if test_loss < best_test_loss:
+            best_test_loss = test_loss
             best_model_state = copy.deepcopy(model.state_dict())
     
     model.load_state_dict(best_model_state) # Load the best model state after training

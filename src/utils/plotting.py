@@ -79,8 +79,8 @@ def plot_toxicity_distribution(train_dataset, test_dataset):
 def plot_training(history, figsize=[10, 6]):
     plt.figure(figsize=figsize)
     plt.plot(history['train_loss'], label='Train Loss')
-    plt.plot(history['val_loss'], label='Validation Loss')
-    plt.title('Training and Validation Loss')
+    plt.plot(history['test_loss'], label='Test Loss')
+    plt.title('Training and Test Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()

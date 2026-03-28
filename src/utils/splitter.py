@@ -1,3 +1,5 @@
+from pyexpat import features
+
 import rdkit
 import torch
 import random
@@ -10,6 +12,9 @@ from sklearn.model_selection import StratifiedKFold
 from rdkit.Chem import AllChem
 import hashlib
 from skfp.model_selection import butina_train_test_split
+from copy import deepcopy
+
+
 
 # def generate_scaffold(smiles, include_chirality=False):
 #     scaffold = MurckoScaffold.MurckoScaffoldSmiles(smiles=smiles, includeChirality=include_chirality)
@@ -119,9 +124,9 @@ def scaffold_split_ac(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0, s
     val_indices.extend(acyclic_indices[n_train:n_train + n_val])
     test_indices.extend(acyclic_indices[n_train + n_val:])
 
-    train_dataset = [features[i] for i in train_indices]
-    test_dataset = [features[i] for i in test_indices]
-    val_dataset = [features[i] for i in val_indices]
+    train_dataset = [deepcopy(features[i]) for i in train_indices]
+    test_dataset = [deepcopy(features[i]) for i in test_indices]
+    val_dataset = [deepcopy(features[i]) for i in val_indices]
 
     return train_dataset, test_dataset, val_dataset
 
@@ -137,7 +142,7 @@ def butina_split(features):
     train_indices = [smiles_idx[smile] for smile in smiles_train]
     test_indices = [smiles_idx[smile] for smile in smiles_test]
 
-    train_dataset = [features[i] for i in train_indices]
-    test_dataset = [features[i] for i in test_indices]
+    train_dataset = [deepcopy(features[i]) for i in train_indices]
+    test_dataset = [deepcopy(features[i]) for i in test_indices]
 
     return train_dataset, test_dataset
