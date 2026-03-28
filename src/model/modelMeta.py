@@ -35,3 +35,23 @@ class TaxonomyEncoder(nn.Module):
 
         # Project to the desired output dimension
         return self.projection(concatenated)
+    
+
+class MetaEncoder(nn.Module):
+    def __init__ (self, config, meta_dim=1, hidden_dim=16, output_dim=64):
+        super().__init__()
+
+        self.encoder_meta = nn.Sequential(
+            nn.Linear(meta_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+
+        self.encoder_tax = TaxonomyEncoder(config, output_dim=output_dim)
+
+    def forward(self, data):
+        duration = data.duration.float().unsqueeze(-1)  # shape: batch_size x 1
+        meta_data = self.encoder_meta(duration)
+        tax_data = self.encoder_tax(data)
+
+        return torch.cat([meta_data, tax_data], dim=-1)
