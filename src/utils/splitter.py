@@ -131,12 +131,15 @@ def scaffold_split_ac(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0, s
     return train_dataset, test_dataset, val_dataset
 
 
-def butina_split(features):
+def butina_split(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0):
 
     smiles_list = [g.smiles for g in features]
     y_list = [g.y for g in features]
 
-    smiles_train, smiles_test, y_train, y_test = butina_train_test_split(smiles_list, y_list)
+    train_size = int(frac_train * len(features))
+    test_size = len(features) - train_size
+
+    smiles_train, smiles_test, y_train, y_test = butina_train_test_split(smiles_list, y_list, train_size=train_size, test_size=test_size)
 
     smiles_idx = {smile: i for i, smile in enumerate(smiles_list)}
     train_indices = [smiles_idx[smile] for smile in smiles_train]
