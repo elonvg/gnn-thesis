@@ -2,3 +2,5 @@ Data/
 __pycache__/
 *.py[cod]"__pycache__/" 
 "*.pyc" 
+CODEX_WORKFLOW.md
+AGENTS.md

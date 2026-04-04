@@ -1,11 +1,18 @@
 import pandas as pd
 import numpy as np
-from rdkit import Chem
-import deepchem as dc
+try:
+    from rdkit import Chem
+except ImportError:
+    Chem = None
+
+try:
+    import deepchem as dc
+except ImportError:
+    dc = None
 
 def load_data(path, selected_columns=None, cut=None):
     # Load data
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, low_memory=False)
 
     # Select columns
     if selected_columns is None:
@@ -21,6 +28,9 @@ def load_data(path, selected_columns=None, cut=None):
     return df
 
 def has_metal(smiles):
+    if Chem is None:
+        return False
+
     mol = Chem.MolFromSmiles(smiles)
     if not mol: return False
     
@@ -42,17 +52,24 @@ def print_mol_types(df):
         (~df['SMILES'].str.contains(r'\.')) & 
         (df['SMILES'].str.fullmatch(r'[A-Z][a-z]?'))
     ).sum()
-    n_metals = df['SMILES'].apply(has_metal).sum()
+    n_metals = df['SMILES'].apply(has_metal).sum() if Chem is not None else None
 
     print(f"Total molecules: {n_mols}")
     print(f"Unique molecules: {n_unique_mols}")
     print(f"Salts: {n_salts}, {n_salts/n_mols:.2%}")
     print(f"Single atoms: {n_single_atoms}, {n_single_atoms/n_mols:.2%}")
-    print(f"Metals: {n_metals}, {n_metals/n_mols:.2%}")
+    if n_metals is None:
+        print("Metals: unavailable (RDKit not installed in this environment)")
+    else:
+        print(f"Metals: {n_metals}, {n_metals/n_mols:.2%}")
 
+def load_base_dataframe(config):
+    return load_data(config["path"], config["selected_columns"], config["cut"])
 
 
 def featurize(df, featurizer, apply_filter=False):
+    if dc is None:
+        raise ImportError("deepchem is required for featurize() but is not installed in this environment.")
 
     features = featurizer.featurize(df['SMILES'])
 
