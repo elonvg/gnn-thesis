@@ -95,3 +95,47 @@ def preprocess(df, split_salts=False, remove_lone=False, remove_metals=False):
 def preprocess_conc(df):
     df["log10c"] = df["conc"].apply(lambda x: np.log10(x))
     return df
+
+
+def mask_data(
+    df,
+    filters=None,
+    require_duration=False,
+    require_taxonomy=False,
+    taxonomy_columns=None,
+):
+    filters = filters or {}
+    mask = (
+        df["conc"].gt(0)
+        & df["SMILES"].notna()
+    )
+
+    print("Filters")
+    for col, values in filters.items():
+        if col in df.columns:
+            col_mask = df[col].isin(values)
+            mask &= col_mask
+            vc = col_mask.value_counts(normalize=True)
+            print(f"-> {col}: {values}\nTrue: {vc.get(True, 0):.3f}")
+
+    if require_duration:
+        if "duration" not in df.columns:
+            raise KeyError("'duration' column is required when require_duration=True")
+        duration_mask = df["duration"].notna()
+        mask &= duration_mask
+        vc = duration_mask.value_counts(normalize=True)
+        print(f"-> require_duration: {require_duration}\nTrue: {vc.get(True, 0):.3f}")
+
+    if require_taxonomy:
+        missing_taxonomy_columns = [col for col in taxonomy_columns if col not in df.columns]
+        if missing_taxonomy_columns:
+            raise KeyError(
+                "Missing taxonomy columns required for require_taxonomy=True: "
+                f"{missing_taxonomy_columns}"
+            )
+        taxonomy_mask = df[list(taxonomy_columns)].notna().all(axis=1)
+        mask &= taxonomy_mask
+        vc = taxonomy_mask.value_counts(normalize=True)
+        print(f"-> require_taxonomy: {require_taxonomy}\nTrue: {vc.get(True, 0):.3f}")
+
+    return mask
