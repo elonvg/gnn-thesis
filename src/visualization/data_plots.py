@@ -90,6 +90,20 @@ def plot_missing_fraction(df, columns=None, title="Missing Fraction by Column", 
     plt.tight_layout()
     plt.show()
 
+def plot_fractions(series, title, top_n=None, figsize=(9, 4), color="#4c78a8"):
+    fractions = series.fillna("Missing").astype(str).value_counts(normalize=True)
+    if top_n is not None:
+        fractions = fractions.head(top_n)
+    summary = fractions.rename("fraction").to_frame()
+    ax = summary["fraction"].sort_values().plot(kind="barh", figsize=figsize, color=color)
+    ax.set_title(title)
+    ax.set_xlabel("Fraction of rows")
+    ax.set_ylabel("")
+    ax.set_xlim(0, max(0.01, summary["fraction"].max() * 1.1))
+    ax.figure.tight_layout()
+    
+    return summary
+
 
 def plot_log_concentration_by_unit(df, unit_col="conc_unit", value_col="conc", top_n=8, figsize=(12, 5)):
     plot_df = df[[unit_col, value_col]].dropna().copy()
