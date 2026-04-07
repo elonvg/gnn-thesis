@@ -132,52 +132,56 @@ CategoricalOneHotEncoder = CategoricalOneHot
 class MetaEncoder(nn.Module):
     def __init__(
         self,
-        meta_dim=1,
-        hidden_dim=16,
-        output_dim=64,
+        # meta_dim=1,
+        numeric_output_dim=16,
+        tax_output_dim=64,
+        categorical_output_dim=16,
         numerical_encoder_cls=NumericalEncoder,
-        numerical_columns=None,
+        numerical_columns=["duration"],
         taxonomy_encoder_cls=TaxonomyEncoder,
         config_tax=None,
         categorical_encoder_cls=CategoricalOneHot,
         config_categorical=None,
-        categorical_config=None,
-        categorical_output_dim=16,
+        # categorical_config=None,
+
     ):
         super().__init__()
 
-        if isinstance(meta_dim, dict) and config_tax is None:
-            config_tax = meta_dim
-            meta_dim = len(numerical_columns or ["duration"])
+        # if isinstance(meta_dim, dict) and config_tax is None:
+        #     config_tax = meta_dim
+        #     meta_dim = len(numerical_columns or ["duration"])
 
-        if categorical_config is not None:
-            if config_categorical is not None and config_categorical != categorical_config:
-                raise ValueError(
-                    "Received both config_categorical and categorical_config with different values."
-                )
-            config_categorical = categorical_config
+        # if categorical_config is not None:
+        #     if config_categorical is not None and config_categorical != categorical_config:
+        #         raise ValueError(
+        #             "Received both config_categorical and categorical_config with different values."
+        #         )
+        #     config_categorical = categorical_config
 
-        self.numerical_columns = list(numerical_columns or ["duration"])
-        if meta_dim != len(self.numerical_columns):
-            raise ValueError(
-                f"meta_dim={meta_dim} does not match the number of numerical columns "
-                f"({len(self.numerical_columns)}): {self.numerical_columns}"
-            )
+        # self.numerical_columns = list(numerical_columns or ["duration"])
+        # if meta_dim != len(self.numerical_columns):
+        #     raise ValueError(
+        #         f"meta_dim={meta_dim} does not match the number of numerical columns "
+        #         f"({len(self.numerical_columns)}): {self.numerical_columns}"
+        #     )
 
         self.encoder_numeric = numerical_encoder_cls(
-            numerical_columns=self.numerical_columns,
-            output_dim=hidden_dim,
+            numerical_columns=numerical_columns,
+            output_dim=numeric_output_dim,
         )
-        self.encoder_tax = taxonomy_encoder_cls(config_tax, output_dim=output_dim) if config_tax else None
+        self.encoder_tax = taxonomy_encoder_cls(
+            config_tax, 
+            output_dim=tax_output_dim
+        ) if config_tax else None
 
         self.encoder_categorical = categorical_encoder_cls(
             config_categorical, 
             output_dim=categorical_output_dim,
-            ) if config_categorical else None
+        ) if config_categorical else None
 
         self.output_dim = self.encoder_numeric.output_dim
         if self.encoder_tax is not None:
-            self.output_dim += output_dim
+            self.output_dim += tax_output_dim
         if self.encoder_categorical is not None:
             self.output_dim += categorical_output_dim
 
