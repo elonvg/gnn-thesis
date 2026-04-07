@@ -15,6 +15,8 @@ class GIN(nn.Module):
         
         super().__init__()
 
+        self.out_dim = output_dim
+
         self.init = GINEConv(
             nn.Sequential(
                 nn.Linear(mol_dim, hidden_dim),

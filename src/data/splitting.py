@@ -1,3 +1,4 @@
+from collections import defaultdict, deque
 import hashlib
 import random
 from copy import deepcopy
@@ -7,7 +8,11 @@ import rdkit
 import torch
 from rdkit.Chem import AllChem
 from rdkit.Chem.Scaffolds import MurckoScaffold
-from skfp.model_selection import butina_train_test_split
+
+try:
+    from skfp.model_selection import butina_train_test_split
+except ImportError:
+    butina_train_test_split = None
 
 
 def generate_scaffold(smiles, include_chirality=False, radius=2):
@@ -112,12 +117,36 @@ def scaffold_split_ac(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0, s
     return train_dataset, test_dataset, val_dataset
 
 
-def butina_split(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0):
+def _build_smiles_index_lookup(smiles_list):
+    indices_by_smile = defaultdict(deque)
+
+    for idx, smile in enumerate(smiles_list):
+        indices_by_smile[smile].append(idx)
+
+    return indices_by_smile
+
+
+def _take_split_indices(split_smiles, indices_by_smile):
+    split_indices = []
+
+    for smile in split_smiles:
+        if not indices_by_smile[smile]:
+            raise ValueError(
+                f"Could not map split SMILES {smile!r} back to a unique row index. "
+                "The split output does not match the original feature list."
+            )
+        split_indices.append(indices_by_smile[smile].popleft())
+
+    return split_indices
+
+
+def _subset_features(features, indices):
+    return [deepcopy(features[i]) for i in indices]
+
+
+def _butina_train_test_indices(features, train_size, test_size):
     smiles_list = [g.smiles for g in features]
     y_list = [g.y for g in features]
-
-    train_size = int(frac_train * len(features))
-    test_size = len(features) - train_size
 
     smiles_train, smiles_test, _, _ = butina_train_test_split(
         smiles_list,
@@ -126,11 +155,62 @@ def butina_split(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0):
         test_size=test_size,
     )
 
-    smiles_idx = {smile: i for i, smile in enumerate(smiles_list)}
-    train_indices = [smiles_idx[smile] for smile in smiles_train]
-    test_indices = [smiles_idx[smile] for smile in smiles_test]
+    indices_by_smile = _build_smiles_index_lookup(smiles_list)
+    train_indices = _take_split_indices(smiles_train, indices_by_smile)
+    test_indices = _take_split_indices(smiles_test, indices_by_smile)
 
-    train_dataset = [deepcopy(features[i]) for i in train_indices]
-    test_dataset = [deepcopy(features[i]) for i in test_indices]
+    return train_indices, test_indices
 
-    return train_dataset, test_dataset
+
+def butina_split(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0):
+    if butina_train_test_split is None:
+        raise ImportError(
+            "skfp is required for butina_split() but is not installed in this environment."
+        )
+
+    assert abs(frac_train + frac_test + frac_valid - 1.0) < 1e-6
+
+    total_size = len(features)
+    if total_size == 0:
+        if frac_valid > 0:
+            return [], [], []
+        return [], []
+
+    if frac_valid == 0.0:
+        train_size = int(frac_train * total_size)
+        test_size = total_size - train_size
+        train_indices, test_indices = _butina_train_test_indices(
+            features,
+            train_size=train_size,
+            test_size=test_size,
+        )
+        train_dataset = _subset_features(features, train_indices)
+        test_dataset = _subset_features(features, test_indices)
+        return train_dataset, test_dataset
+
+    train_valid_size = total_size - int(frac_test * total_size)
+    test_size = total_size - train_valid_size
+    train_valid_indices, test_indices = _butina_train_test_indices(
+        features,
+        train_size=train_valid_size,
+        test_size=test_size,
+    )
+
+    train_valid_features = [features[i] for i in train_valid_indices]
+    relative_train_frac = frac_train / (frac_train + frac_valid)
+    train_size = int(relative_train_frac * len(train_valid_features))
+    valid_size = len(train_valid_features) - train_size
+    train_indices_within, valid_indices_within = _butina_train_test_indices(
+        train_valid_features,
+        train_size=train_size,
+        test_size=valid_size,
+    )
+
+    train_indices = [train_valid_indices[i] for i in train_indices_within]
+    valid_indices = [train_valid_indices[i] for i in valid_indices_within]
+
+    train_dataset = _subset_features(features, train_indices)
+    test_dataset = _subset_features(features, test_indices)
+    valid_dataset = _subset_features(features, valid_indices)
+
+    return train_dataset, test_dataset, valid_dataset

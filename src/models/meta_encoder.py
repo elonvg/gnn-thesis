@@ -141,6 +141,7 @@ class MetaEncoder(nn.Module):
         config_tax=None,
         categorical_encoder_cls=CategoricalOneHot,
         config_categorical=None,
+        categorical_config=None,
         categorical_output_dim=16,
     ):
         super().__init__()
@@ -148,6 +149,13 @@ class MetaEncoder(nn.Module):
         if isinstance(meta_dim, dict) and config_tax is None:
             config_tax = meta_dim
             meta_dim = len(numerical_columns or ["duration"])
+
+        if categorical_config is not None:
+            if config_categorical is not None and config_categorical != categorical_config:
+                raise ValueError(
+                    "Received both config_categorical and categorical_config with different values."
+                )
+            config_categorical = categorical_config
 
         self.numerical_columns = list(numerical_columns or ["duration"])
         if meta_dim != len(self.numerical_columns):

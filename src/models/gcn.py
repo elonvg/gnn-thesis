@@ -13,6 +13,7 @@ class GCN(nn.Module):
         super().__init__()
 
         self.out_dim = output_dim
+        self.output_dim = output_dim
 
         # self.atom_encoder = nn.Embedding(120, 32) # Assuming atomic numbers up to 120 -> embed to 32-dim vectors
 
