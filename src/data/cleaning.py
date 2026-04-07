@@ -116,7 +116,7 @@ def mask_data(
             col_mask = df[col].isin(values)
             mask &= col_mask
             vc = col_mask.value_counts(normalize=True)
-            print(f"-> {col}: {values}\nTrue: {vc.get(True, 0):.3f}")
+            print(f"{col}: {values}\nTrue: {vc.get(True, 0):.3f}")
 
     if require_duration:
         if "duration" not in df.columns:
@@ -124,7 +124,7 @@ def mask_data(
         duration_mask = df["duration"].notna()
         mask &= duration_mask
         vc = duration_mask.value_counts(normalize=True)
-        print(f"-> require_duration: {require_duration}\nTrue: {vc.get(True, 0):.3f}")
+        print(f"require_duration: {require_duration}\nTrue: {vc.get(True, 0):.3f}")
 
     if require_taxonomy:
         missing_taxonomy_columns = [col for col in taxonomy_columns if col not in df.columns]
@@ -136,6 +136,6 @@ def mask_data(
         taxonomy_mask = df[list(taxonomy_columns)].notna().all(axis=1)
         mask &= taxonomy_mask
         vc = taxonomy_mask.value_counts(normalize=True)
-        print(f"-> require_taxonomy: {require_taxonomy}\nTrue: {vc.get(True, 0):.3f}")
+        print(f"require_taxonomy: {require_taxonomy}\nTrue: {vc.get(True, 0):.3f}")
 
     return mask

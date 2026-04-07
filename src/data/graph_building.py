@@ -1,8 +1,20 @@
 import torch
 
 
-def build_graph_features(df, df_tax, embedding_size):
+def build_graph_features(
+    df,
+    df_tax,
+    embedding_size,
+    df_categorical=None,
+    categorical_columns=None,
+    numerical_columns=None,
+):
     features = []
+
+    if df_categorical is not None and categorical_columns is None:
+        categorical_columns = list(df_categorical.columns)
+    if numerical_columns is None:
+        numerical_columns = ["duration"]
 
     for row_idx, graph in enumerate(df["features"]):
         graph.x = graph.x.float()
@@ -11,7 +23,12 @@ def build_graph_features(df, df_tax, embedding_size):
         for col in embedding_size.keys():
             setattr(graph, col, torch.tensor(df_tax.iloc[row_idx][col], dtype=torch.long))
 
-        graph.duration = torch.tensor(df.iloc[row_idx]["duration"], dtype=torch.float)
+        if df_categorical is not None:
+            for col in categorical_columns:
+                setattr(graph, col, torch.tensor(df_categorical.iloc[row_idx][col], dtype=torch.long))
+
+        for col in numerical_columns:
+            setattr(graph, col, torch.tensor(df.iloc[row_idx][col], dtype=torch.float))
         features.append(graph)
 
     return features

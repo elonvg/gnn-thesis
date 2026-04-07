@@ -1,5 +1,40 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+def _num_classes_from_config(value):
+    if isinstance(value, tuple):
+        return value[0]
+    return value
+
+
+class NumericalEncoder(nn.Module):
+    def __init__(self, numerical_columns=None, output_dim=16):
+        super().__init__()
+
+        self.numerical_columns = list(numerical_columns or ["duration"])
+        self.input_dim = len(self.numerical_columns)
+        self.output_dim = output_dim
+
+        self.projection = nn.Sequential(
+            nn.Linear(self.input_dim, output_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+
+    def forward(self, data):
+        numerical_values = []
+
+        for col in self.numerical_columns:
+            values = getattr(data, col).float()
+            if values.dim() == 1:
+                values = values.unsqueeze(-1)
+            numerical_values.append(values)
+
+        concatenated = torch.cat(numerical_values, dim=-1)
+        return self.projection(concatenated)
+
 
 class TaxonomyEncoder(nn.Module):
     def __init__(self, config, output_dim=64):
@@ -35,23 +70,115 @@ class TaxonomyEncoder(nn.Module):
 
         # Project to the desired output dimension
         return self.projection(concatenated)
-    
 
-class MetaEncoder(nn.Module):
-    def __init__ (self, config, meta_dim=1, hidden_dim=16, output_dim=64):
+
+class TaxonomyOneHot(nn.Module):
+    def __init__(self, config, output_dim=64):
         super().__init__()
 
-        self.encoder_meta = nn.Sequential(
-            nn.Linear(meta_dim, hidden_dim),
+        self.num_classes = {
+            col: _num_classes_from_config(value)
+            for col, value in config.items()
+        }
+        self.raw_dim = sum(self.num_classes.values())
+
+        self.projection = nn.Sequential(
+            nn.Linear(self.raw_dim, output_dim),
             nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.Dropout(0.1)
         )
 
-        self.encoder_tax = TaxonomyEncoder(config, output_dim=output_dim)
+    def forward(self, data):
+        encoded_list = []
+
+        for col, num_classes in self.num_classes.items():
+            ids = getattr(data, col).long()
+            encoded_list.append(F.one_hot(ids, num_classes=num_classes).float())
+
+        concatenated = torch.cat(encoded_list, dim=-1)
+        return self.projection(concatenated)
+
+
+class CategoricalOneHot(nn.Module):
+    def __init__(self, config, output_dim=32):
+        super().__init__()
+
+        self.num_classes = {
+            col: _num_classes_from_config(value)
+            for col, value in config.items()
+        }
+        self.raw_dim = sum(self.num_classes.values())
+
+        self.projection = nn.Sequential(
+            nn.Linear(self.raw_dim, output_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
 
     def forward(self, data):
-        duration = data.duration.float().unsqueeze(-1)  # shape: batch_size x 1
-        meta_data = self.encoder_meta(duration)
-        tax_data = self.encoder_tax(data)
+        encoded_list = []
 
-        return torch.cat([meta_data, tax_data], dim=-1)
+        for col, num_classes in self.num_classes.items():
+            ids = getattr(data, col).long()
+            encoded_list.append(F.one_hot(ids, num_classes=num_classes).float())
+
+        concatenated = torch.cat(encoded_list, dim=-1)
+        return self.projection(concatenated)
+
+
+CategoricalOneHotEncoder = CategoricalOneHot
+
+
+class MetaEncoder(nn.Module):
+    def __init__(
+        self,
+        meta_dim=1,
+        hidden_dim=16,
+        output_dim=64,
+        numerical_encoder_cls=NumericalEncoder,
+        numerical_columns=None,
+        taxonomy_encoder_cls=TaxonomyEncoder,
+        config_tax=None,
+        categorical_encoder_cls=CategoricalOneHot,
+        config_categorical=None,
+        categorical_output_dim=16,
+    ):
+        super().__init__()
+
+        if isinstance(meta_dim, dict) and config_tax is None:
+            config_tax = meta_dim
+            meta_dim = len(numerical_columns or ["duration"])
+
+        self.numerical_columns = list(numerical_columns or ["duration"])
+        if meta_dim != len(self.numerical_columns):
+            raise ValueError(
+                f"meta_dim={meta_dim} does not match the number of numerical columns "
+                f"({len(self.numerical_columns)}): {self.numerical_columns}"
+            )
+
+        self.encoder_numeric = numerical_encoder_cls(
+            numerical_columns=self.numerical_columns,
+            output_dim=hidden_dim,
+        )
+        self.encoder_tax = taxonomy_encoder_cls(config_tax, output_dim=output_dim) if config_tax else None
+
+        self.encoder_categorical = categorical_encoder_cls(
+            config_categorical, 
+            output_dim=categorical_output_dim,
+            ) if config_categorical else None
+
+        self.output_dim = self.encoder_numeric.output_dim
+        if self.encoder_tax is not None:
+            self.output_dim += output_dim
+        if self.encoder_categorical is not None:
+            self.output_dim += categorical_output_dim
+
+    def forward(self, data):
+        encoded_parts = [self.encoder_numeric(data)]
+
+        if self.encoder_tax is not None:
+            encoded_parts.append(self.encoder_tax(data))
+        if self.encoder_categorical is not None:
+            encoded_parts.append(self.encoder_categorical(data))
+
+        return torch.cat(encoded_parts, dim=-1)
