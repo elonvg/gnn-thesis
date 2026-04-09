@@ -143,24 +143,29 @@ class AttentiveFP(torch.nn.Module):
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
 
-        # Atom Embedding:
+        # Inital atom embedding:
         x = F.leaky_relu_(self.lin1(x))
 
+        # Attention for bonds/edges
         h = F.elu_(self.gate_conv(x, edge_index, edge_attr))
         h = F.dropout(h, p=self.dropout, training=self.training)
+        # Add parts of attention info to atom embedding
         x = self.gru(h, x).relu_()
 
+        # Additional gate_conv layers
         for conv, gru in zip(self.atom_convs, self.atom_grus):
             h = conv(x, edge_index)
             h = F.elu(h)
             h = F.dropout(h, p=self.dropout, training=self.training)
             x = gru(h, x).relu()
 
-        # Molecule Embedding:
+        # Molecule embedding:
         row = torch.arange(batch.size(0), device=batch.device)
         edge_index = torch.stack([row, batch], dim=0)
 
         out = global_add_pool(x, batch).relu_()
+
+        # Molecule level refinement
         for t in range(self.num_timesteps):
             h = F.elu_(self.mol_conv((x, out), edge_index))
             h = F.dropout(h, p=self.dropout, training=self.training)

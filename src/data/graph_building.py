@@ -4,7 +4,7 @@ import torch
 def build_graph_features(
     df,
     df_tax,
-    embedding_size,
+    tax_embedding,
     df_categorical=None,
     categorical_columns=None,
     numerical_columns=None,
@@ -20,7 +20,7 @@ def build_graph_features(
         graph.x = graph.x.float()
         graph.y = torch.tensor(df.iloc[row_idx]["log10c"], dtype=torch.float)
 
-        for col in embedding_size.keys():
+        for col in tax_embedding.keys():
             setattr(graph, col, torch.tensor(df_tax.iloc[row_idx][col], dtype=torch.long))
 
         if df_categorical is not None:

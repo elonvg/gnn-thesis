@@ -1,3 +1,6 @@
+import re
+from functools import lru_cache
+
 import numpy as np
 
 try:
@@ -10,38 +13,86 @@ except ImportError:
 
 remover = SaltRemover() if SaltRemover is not None else None
 
+_SINGLE_ATOM_PATTERN = re.compile(r"[A-Z][a-z]?")
+_SINGLE_BRACKET_PATTERN = re.compile(r"\[[^\[\]\.]+\]")
+
+
+def _is_metal_atomic_num(num):
+    return (3 <= num <= 4) or (11 <= num <= 13) or (19 <= num <= 31) or \
+           (37 <= num <= 50) or (55 <= num <= 84) or (num >= 87)
+
+
+def _fallback_single_node(smiles):
+    if not isinstance(smiles, str) or not smiles or "." in smiles:
+        return False
+    return bool(
+        _SINGLE_ATOM_PATTERN.fullmatch(smiles)
+        or _SINGLE_BRACKET_PATTERN.fullmatch(smiles)
+    )
+
+
+def _fallback_fragment_count(smiles):
+    if not isinstance(smiles, str) or not smiles:
+        return 0
+    return sum(1 for fragment in smiles.split(".") if fragment)
+
+
+@lru_cache(maxsize=100_000)
+def _smiles_stats_cached(smiles):
+    if Chem is None:
+        fragment_count = _fallback_fragment_count(smiles)
+        atom_count = 1 if _fallback_single_node(smiles) else 0
+        return fragment_count, atom_count, False
+
+    mol = Chem.MolFromSmiles(smiles, sanitize=False)
+    if mol is None:
+        fragment_count = _fallback_fragment_count(smiles)
+        atom_count = 1 if _fallback_single_node(smiles) else 0
+        return fragment_count, atom_count, False
+
+    fragment_count = len(Chem.GetMolFrags(mol))
+    atom_numbers = [atom.GetAtomicNum() for atom in mol.GetAtoms()]
+    atom_count = len(atom_numbers)
+    has_metal_flag = any(_is_metal_atomic_num(num) for num in atom_numbers)
+    return fragment_count, atom_count, has_metal_flag
+
+
+def _smiles_stats(smiles):
+    if not isinstance(smiles, str) or not smiles:
+        return 0, 0, False
+    return _smiles_stats_cached(smiles)
+
+
+def fragment_count(smiles):
+    return _smiles_stats(smiles)[0]
+
+
+def is_salt(smiles):
+    return fragment_count(smiles) > 1
+
+
+def is_single_node(smiles):
+    return _smiles_stats(smiles)[1] == 1
+
 
 def has_metal(smiles):
-    if Chem is None:
-        return False
-
-    mol = Chem.MolFromSmiles(smiles)
-    if not mol:
-        return False
-
-    for atom in mol.GetAtoms():
-        num = atom.GetAtomicNum()
-        if (3 <= num <= 4) or (11 <= num <= 13) or (19 <= num <= 31) or \
-           (37 <= num <= 50) or (55 <= num <= 84) or (num >= 87):
-            return True
-
-    return False
+    return _smiles_stats(smiles)[2]
 
 
 def print_mol_types(df):
     n_mols = len(df)
     smiles = df["SMILES"].fillna("")
     n_unique_mols = smiles.nunique()
-    n_salts = smiles.str.contains(r"\.").sum()
-    n_single_atoms = ((~smiles.str.contains(r"\.")) & smiles.str.fullmatch(r"[A-Z][a-z]?")).sum()
-    n_metals = smiles.apply(has_metal).sum() if Chem is not None else None
+    n_salts = smiles.apply(is_salt).sum()
+    n_single_nodes = smiles.apply(is_single_node).sum()
+    n_metals = smiles.apply(has_metal).sum()
 
     print(f"Total molecules: {n_mols}")
     print(f"Unique molecules: {n_unique_mols}")
-    print(f"Salts: {n_salts}, {n_salts / n_mols:.2%}")
-    print(f"Single atoms: {n_single_atoms}, {n_single_atoms / n_mols:.2%}")
-    if n_metals is None:
-        print("Metals: unavailable (RDKit not installed in this environment)")
+    print(f"Disconnected species: {n_salts}, {n_salts / n_mols:.2%}")
+    print(f"Single-node species: {n_single_nodes}, {n_single_nodes / n_mols:.2%}")
+    if Chem is None:
+        print("Metals: unavailable without RDKit")
     else:
         print(f"Metals: {n_metals}, {n_metals / n_mols:.2%}")
 
@@ -81,8 +132,8 @@ def preprocess(df, split_salts=False, remove_lone=False, remove_metals=False):
         df["SMILES"] = df["SMILES"].apply(salt_remover)
 
     if remove_lone:
-        is_lone_atom = (~df["SMILES"].str.contains(r"\.")) & (df["SMILES"].str.fullmatch(r"[A-Z][a-z]?"))
-        df = df[~is_lone_atom].reset_index(drop=True)
+        is_single_node_mask = df["SMILES"].apply(is_single_node)
+        df = df[~is_single_node_mask].reset_index(drop=True)
 
     if remove_metals:
         df = df[~df["SMILES"].apply(has_metal)].reset_index(drop=True)
