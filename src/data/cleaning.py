@@ -2,6 +2,7 @@ import re
 from functools import lru_cache
 
 import numpy as np
+import pandas as pd
 
 try:
     from rdkit import Chem
@@ -127,7 +128,17 @@ def salt_remover(smile, remover=remover):
     return smile
 
 
-def preprocess(df, split_salts=False, remove_lone=False, remove_metals=False):
+def preprocess(
+    df,
+    split_salts=False,
+    remove_lone=False,
+    remove_metals=False,
+    max_conc_value=None,
+    duration_fill_value=None,
+    max_duration_hours=None,
+    log_transform_duration=False,
+    keep_duration_raw=False,
+):
     if split_salts:
         df["SMILES"] = df["SMILES"].apply(salt_remover)
 
@@ -138,13 +149,71 @@ def preprocess(df, split_salts=False, remove_lone=False, remove_metals=False):
     if remove_metals:
         df = df[~df["SMILES"].apply(has_metal)].reset_index(drop=True)
 
-    df = preprocess_conc(df)
+    df = preprocess_duration(
+        df,
+        fill_value=duration_fill_value,
+        max_hours=max_duration_hours,
+        log_transform=log_transform_duration,
+        keep_raw=keep_duration_raw,
+    )
+    df = preprocess_conc(
+        df,
+        max_conc=max_conc_value
+    )
 
     return df
 
 
-def preprocess_conc(df):
-    df["log10c"] = df["conc"].apply(lambda x: np.log10(x))
+def preprocess_conc(df, max_conc):
+
+    if "conc" not in df.columns:
+        return df
+
+    conc = pd.to_numeric(df["conc"], errors="coerce")
+
+    if max_conc is not None:
+        keep_mask = conc.isna() | conc.le(max_conc)
+        df = df.loc[keep_mask].reset_index(drop=True)
+        conc = conc.loc[keep_mask].reset_index(drop=True)
+
+    df["conc"] = conc
+    df["log10c"] = np.log10(df["conc"])
+    return df
+
+
+def preprocess_duration(
+    df,
+    fill_value=None,
+    max_hours=None,
+    log_transform=False,
+    keep_raw=False,
+):
+    if "duration" not in df.columns:
+        return df
+
+    duration = pd.to_numeric(df["duration"], errors="coerce")
+
+    if keep_raw:
+        df["duration_raw"] = duration
+
+    # Non-positive durations are treated as missing before imputation so the
+    # later log10 transform always receives positive values.
+    duration = duration.where(duration > 0)
+
+    if max_hours is not None:
+        keep_mask = duration.isna() | duration.le(max_hours)
+        df = df.loc[keep_mask].reset_index(drop=True)
+        duration = duration.loc[keep_mask].reset_index(drop=True)
+
+    if fill_value is not None:
+        duration = duration.fillna(fill_value)
+
+    if log_transform:
+        if duration.le(0).any():
+            raise ValueError("Duration values must be positive before log10 transformation.")
+        duration = duration.apply(np.log10)
+
+    df["duration"] = duration
     return df
 
 
