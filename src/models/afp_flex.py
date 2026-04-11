@@ -66,24 +66,8 @@ class GATEConv(MessagePassing):
         return self.lin2(x_j) * alpha.unsqueeze(-1)
 
 
-class AttentiveFP(torch.nn.Module):
-    r"""The Attentive FP model for molecular representation learning from the
-    `"Pushing the Boundaries of Molecular Representation for Drug Discovery
-    with the Graph Attention Mechanism"
-    <https://pubs.acs.org/doi/10.1021/acs.jmedchem.9b00959>`_ paper, based on
-    graph attention mechanisms.
+class AFPFlex(torch.nn.Module):
 
-    Args:
-        in_channels (int): Size of each input sample.
-        hidden_channels (int): Hidden node feature dimensionality.
-        out_channels (int): Size of each output sample.
-        edge_dim (int): Edge feature dimensionality.
-        num_layers (int): Number of GNN layers.
-        num_timesteps (int): Number of iterative refinement steps for global
-            readout.
-        dropout (float, optional): Dropout probability. (default: :obj:`0.0`)
-
-    """
     def __init__(
         self,
         in_channels=9,
@@ -125,6 +109,8 @@ class AttentiveFP(torch.nn.Module):
         self.mol_conv.explain = False  # Cannot explain global pooling.
         self.mol_gru = GRUCell(hidden_channels, hidden_channels)
 
+        self.linlone = nn.Linear(hidden_channels, hidden_channels)
+
         self.lin2 = Linear(hidden_channels, out_channels)
 
     def reset_parameters(self):
@@ -137,42 +123,57 @@ class AttentiveFP(torch.nn.Module):
             gru.reset_parameters()
         self.mol_conv.reset_parameters()
         self.mol_gru.reset_parameters()
+        self.linlone.reset_parameters()
         self.lin2.reset_parameters()
 
 
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        
+        num_graphs = int(batch.max()) + 1
+        has_edges = torch.zeros(num_graphs, dtype=torch.bool, device=batch.device)
+        # Count number of edges for each graph
+        if edge_index.numel():
+            has_edges[batch[edge_index[0]]] = True
 
         # Inital atom embedding:
-        x = F.leaky_relu_(self.lin1(x))
+        x0 = F.leaky_relu_(self.lin1(x))
 
         # First attentive layer - using edge features
-        h = F.elu_(self.gate_conv(x, edge_index, edge_attr))
+        h = F.elu_(self.gate_conv(x0, edge_index, edge_attr))
         h = F.dropout(h, p=self.dropout, training=self.training)
         # Add parts of attention info to atom embedding
-        x = self.gru(h, x).relu_() # h is C in paper
+        xg = self.gru(h, x0).relu_() # h is C in paper
 
         # Additional attentive layers
         # Note: using GATConv instead of GATEConv - no edge features
         for conv, gru in zip(self.atom_convs, self.atom_grus):
-            h = conv(x, edge_index) # Computer attention + context vector
+            h = conv(xg, edge_index) # Computer attention + context vector
             h = F.elu(h)
             h = F.dropout(h, p=self.dropout, training=self.training)
-            x = gru(h, x).relu() # Updates atom state
-
+            xg = gru(h, xg).relu() # Updates atom state
+    
         # Molecule embedding:
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
 
-        out = global_add_pool(x, batch).relu_() # Inital molecule state vector
+        out = global_add_pool(xg, batch).relu_() # Inital molecule state vector
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
-            h = F.elu_(self.mol_conv((x, out), edge_index)) # Attention
+            h = F.elu_(self.mol_conv((xg, out), edge_index)) # Attention
             h = F.dropout(h, p=self.dropout, training=self.training)
             out = self.mol_gru(h, out).relu_() # Update
 
+        gnn_out = out
+        
+        # Output for edgess graphs
+        xl = self.linlone(x0)
+        atom_out = global_add_pool(xl, batch) # Sum all state vectors that belong to same graph
+
         # Predictor:
+        out = torch.where(has_edges.unsqueeze(-1), gnn_out, atom_out) # Filter for graphs with/without edges
         out = F.dropout(out, p=self.dropout, training=self.training)
+        
         pred = self.lin2(out) # Linear layer for final prediction
         return pred
