@@ -1,4 +1,15 @@
+import pandas as pd
 import torch
+
+
+def _normalize_raw_taxid(value):
+    if pd.isna(value):
+        return 0
+
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def build_graph_features(
@@ -20,8 +31,11 @@ def build_graph_features(
         graph.x = graph.x.float()
         graph.y = torch.tensor(df.iloc[row_idx]["log10c"], dtype=torch.float)
 
-        for col in tax_embedding.keys():
+        for col in df_tax.columns:
             setattr(graph, col, torch.tensor(df_tax.iloc[row_idx][col], dtype=torch.long))
+
+        if "taxid" in df.columns:
+            graph.taxid_raw = torch.tensor(_normalize_raw_taxid(df.iloc[row_idx]["taxid"]), dtype=torch.long)
 
         if df_categorical is not None:
             for col in categorical_columns:

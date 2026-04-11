@@ -1,6 +1,9 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -11,6 +14,7 @@ from src.models.meta_encoder import (
     NumericalEncoder,
     TaxonomyOneHot,
 )
+from src.models.taxonomic_embedder import PretrainedTaxidEncoder
 from src.models.toxicity_model import ToxicityModel
 from src.training.loops import train
 
@@ -165,6 +169,48 @@ def test_meta_encoder_with_multiple_numerical_columns():
     assert encoder.output_dim == 12
 
 
+def test_pretrained_taxid_encoder_reads_raw_taxids():
+    encoder = PretrainedTaxidEncoder(
+        taxonomic_embedding_dict={
+            "10090": np.ones(4, dtype=np.float32),
+            "10116": np.full(4, 2.0, dtype=np.float32),
+        },
+        embedding_dim=4,
+        output_dim=6,
+        dropout=0.0,
+    )
+    batch = LoaderBatch(taxid_raw=torch.tensor([10090, 10116, 0], dtype=torch.long))
+
+    output = encoder(batch)
+
+    assert output.shape == (3, 6)
+
+
+def test_meta_encoder_can_append_pretrained_taxid_embeddings():
+    batch = LoaderBatch(
+        duration=torch.tensor([24.0, 48.0]),
+        taxid_raw=torch.tensor([10090, 10116], dtype=torch.long),
+    )
+    encoder = MetaEncoder(
+        hidden_dim=12,
+        numerical_columns=["duration"],
+        pretrained_taxid_output_dim=8,
+        pretrained_taxid_encoder_kwargs={
+            "taxonomic_embedding_dict": {
+                "10090": np.ones(4, dtype=np.float32),
+                "10116": np.full(4, 2.0, dtype=np.float32),
+            },
+            "embedding_dim": 4,
+            "dropout": 0.0,
+        },
+    )
+
+    output = encoder(batch)
+
+    assert output.shape == (2, 20)
+    assert encoder.output_dim == 20
+
+
 def test_take_split_indices_preserves_duplicate_rows():
     smiles_list = ["A", "B", "A", "C", "B"]
     indices_by_smile = _build_smiles_index_lookup(smiles_list)
@@ -202,6 +248,40 @@ def test_butina_split_returns_validation_split_without_reusing_duplicate_rows():
     assert [item.row_id for item in train_dataset] == [0, 1]
     assert [item.row_id for item in val_dataset] == [2, 3]
     assert [item.row_id for item in test_dataset] == [4, 5]
+
+
+def test_butina_split_can_use_precomputed_cluster_csv():
+    features = [
+        SimpleNamespace(smiles=smiles, y=torch.tensor(float(idx)), row_id=idx)
+        for idx, smiles in enumerate(["A", "A", "B", "C", "B", "D"])
+    ]
+
+    csv_content = "\n".join(
+        [
+            "SMILES,Cluster_at_cutoff_0.3",
+            "A,10",
+            "B,20",
+            "C,20",
+            "D,30",
+        ]
+    )
+
+    with TemporaryDirectory() as tmpdir:
+        csv_path = Path(tmpdir) / "butina_clusters.csv"
+        csv_path.write_text(csv_content)
+
+        train_dataset, test_dataset, val_dataset = butina_split(
+            features,
+            frac_train=0.5,
+            frac_test=0.25,
+            frac_valid=0.25,
+            cluster_csv_path=csv_path,
+            cluster_column="Cluster_at_cutoff_0.3",
+        )
+
+    assert [item.row_id for item in train_dataset] == [2, 3, 4]
+    assert [item.row_id for item in val_dataset] == [0, 1]
+    assert [item.row_id for item in test_dataset] == [5]
 
 
 def test_toxicity_model_infers_encoder_dimensions():

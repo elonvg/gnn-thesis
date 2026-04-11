@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .taxonomic_embedder import PretrainedTaxidEncoder
+
 
 def _num_classes_from_config(value):
     if isinstance(value, tuple):
@@ -133,35 +135,71 @@ class MetaEncoder(nn.Module):
         tax_output_dim=64,
         categorical_output_dim=16,
         numerical_encoder_cls=NumericalEncoder,
-        numerical_columns=["duration"],
+        numerical_columns=None,
         taxonomy_encoder_cls=TaxonomyEncoder,
         config_tax=None,
         categorical_encoder_cls=CategoricalOneHot,
-        config_categorical=None
-     ):
-        
+        config_categorical=None,
+        pretrained_taxid_encoder_cls=PretrainedTaxidEncoder,
+        pretrained_taxid_output_dim=64,
+        pretrained_taxid_path=None,
+        pretrained_taxid_field="taxid_raw",
+        pretrained_taxid_encoder_kwargs=None,
+        hidden_dim=None,
+        output_dim=None,
+        meta_dim=None,
+        categorical_config=None,
+    ):
         super().__init__()
 
+        if hidden_dim is not None:
+            numeric_output_dim = hidden_dim
+        if output_dim is not None:
+            tax_output_dim = output_dim
+        if categorical_config is not None and config_categorical is None:
+            config_categorical = categorical_config
+
         self.encoder_numeric = numerical_encoder_cls(
-            numerical_columns=numerical_columns,
+            numerical_columns=numerical_columns or ["duration"],
             output_dim=numeric_output_dim,
         )
-        
+
         self.encoder_tax = taxonomy_encoder_cls(
-            config_tax, 
+            config_tax,
             output_dim=tax_output_dim
         ) if config_tax else None
 
         self.encoder_categorical = categorical_encoder_cls(
-            config_categorical, 
+            config_categorical,
             output_dim=categorical_output_dim,
         ) if config_categorical else None
+
+        pretrained_taxid_encoder_kwargs = dict(pretrained_taxid_encoder_kwargs or {})
+        if pretrained_taxid_path is not None:
+            pretrained_taxid_encoder_kwargs.setdefault("embedding_path", pretrained_taxid_path)
+        pretrained_taxid_encoder_kwargs.setdefault("output_dim", pretrained_taxid_output_dim)
+        pretrained_taxid_encoder_kwargs.setdefault("taxid_field", pretrained_taxid_field)
+
+        use_pretrained_taxid = (
+            pretrained_taxid_encoder_cls is not None
+            and (
+                pretrained_taxid_path is not None
+                or "taxonomic_embedding_dict" in pretrained_taxid_encoder_kwargs
+            )
+        )
+        self.encoder_pretrained_taxid = (
+            pretrained_taxid_encoder_cls(**pretrained_taxid_encoder_kwargs)
+            if use_pretrained_taxid
+            else None
+        )
 
         self.output_dim = self.encoder_numeric.output_dim
         if self.encoder_tax is not None:
             self.output_dim += tax_output_dim
         if self.encoder_categorical is not None:
             self.output_dim += categorical_output_dim
+        if self.encoder_pretrained_taxid is not None:
+            self.output_dim += self.encoder_pretrained_taxid.output_dim
 
     def forward(self, data):
         encoded_parts = [self.encoder_numeric(data)]
@@ -170,5 +208,7 @@ class MetaEncoder(nn.Module):
             encoded_parts.append(self.encoder_tax(data))
         if self.encoder_categorical is not None:
             encoded_parts.append(self.encoder_categorical(data))
+        if self.encoder_pretrained_taxid is not None:
+            encoded_parts.append(self.encoder_pretrained_taxid(data))
 
         return torch.cat(encoded_parts, dim=-1)
