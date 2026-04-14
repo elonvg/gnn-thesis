@@ -1,8 +1,40 @@
 import copy
 
+import pandas as pd
 import torch
 
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - fallback for minimal environments
+    tqdm = None
+
 from .metrics import regression_metrics
+
+
+def predict_df(model, loader, device, cols=None):
+    frames = []
+    model.eval()
+
+    with torch.no_grad():
+        for batch in loader:
+            batch = batch.to(device)
+            frame = pd.DataFrame(
+                {
+                    "pred_norm": model(batch).view(-1).cpu().numpy(),
+                    "actual_norm": batch.y.view(-1).cpu().numpy(),
+                }
+            )
+
+            for col in cols or []:
+                value = getattr(batch, col)
+                if torch.is_tensor(value):
+                    frame[col] = value.view(-1).cpu().numpy()
+                else:
+                    frame[col] = list(value)
+
+            frames.append(frame)
+
+    return pd.concat(frames, ignore_index=True)
 
 
 def train_epoch(model, loader, optimizer, loss_fn, device):
@@ -82,6 +114,41 @@ def _format_progress(prefix, loss, rmse=None, mae=None):
     return ", ".join(metrics)
 
 
+def _build_progress_postfix(train_loss, val_metrics=None, test_metrics=None, optimizer=None):
+    postfix = {"train_loss": f"{train_loss:.4f}"}
+
+    if val_metrics is not None:
+        postfix.update(
+            {
+                "val_loss": f"{val_metrics[0]:.4f}",
+                "val_rmse": f"{val_metrics[1]:.4f}",
+                "val_mae": f"{val_metrics[2]:.4f}",
+            }
+        )
+
+    if test_metrics is not None:
+        postfix.update(
+            {
+                "test_loss": f"{test_metrics[0]:.4f}",
+                "test_rmse": f"{test_metrics[1]:.4f}",
+                "test_mae": f"{test_metrics[2]:.4f}",
+            }
+        )
+
+    if optimizer is not None and optimizer.param_groups:
+        postfix["lr"] = f"{optimizer.param_groups[0]['lr']:.2e}"
+
+    return postfix
+
+
+def _write_progress_message(progress_bar, message):
+    if progress_bar is not None:
+        progress_bar.write(message)
+        return
+
+    print(message)
+
+
 def train(
     model,
     train_loader,
@@ -116,54 +183,70 @@ def train(
     best_monitor_value = float("inf")
     best_model_state = copy.deepcopy(model.state_dict())
     epochs_without_improvement = 0
+    progress_bar = None
+    epoch_iterator = range(epochs)
 
-    for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device)
-        history["train_loss"].append(train_loss)
+    if verbose_every and tqdm is not None:
+        progress_bar = tqdm(epoch_iterator, total=epochs, dynamic_ncols=True, unit="epoch")
+        epoch_iterator = progress_bar
 
-        val_metrics = None
-        if val_loader is not None:
-            val_metrics = evaluate(model, val_loader, loss_fn, device)
-            _record_metrics(history, "val", *val_metrics)
+    try:
+        for epoch in epoch_iterator:
+            train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device)
+            history["train_loss"].append(train_loss)
 
-        test_metrics = None
-        if test_loader is not None:
-            test_metrics = evaluate(model, test_loader, loss_fn, device)
-            _record_metrics(history, "test", *test_metrics)
+            val_metrics = None
+            if val_loader is not None:
+                val_metrics = evaluate(model, val_loader, loss_fn, device)
+                _record_metrics(history, "val", *val_metrics)
 
-        if val_metrics is not None:
-            monitor_value = val_metrics[0]
-        elif test_metrics is not None:
-            monitor_value = test_metrics[0]
-        else:
-            monitor_value = train_loss
+            test_metrics = None
+            if test_loader is not None:
+                test_metrics = evaluate(model, test_loader, loss_fn, device)
+                _record_metrics(history, "test", *test_metrics)
 
-        if scheduler is not None:
-            scheduler.step(monitor_value)
-
-        if verbose_every and epoch % verbose_every == 0:
-            progress_parts = [_format_progress("Train", train_loss)]
             if val_metrics is not None:
-                progress_parts.append(_format_progress("Val", *val_metrics))
-            if test_metrics is not None:
-                progress_parts.append(_format_progress("Test", *test_metrics))
-            print(f"Epoch {epoch}: " + ", ".join(progress_parts))
+                monitor_value = val_metrics[0]
+            elif test_metrics is not None:
+                monitor_value = test_metrics[0]
+            else:
+                monitor_value = train_loss
 
-        if monitor_value < best_monitor_value - early_stopping_min_delta:
-            best_monitor_value = monitor_value
-            best_model_state = copy.deepcopy(model.state_dict())
-            history["best_epoch"] = epoch
-            history["best_monitor_value"] = monitor_value
-            epochs_without_improvement = 0
-        elif early_stopping_patience is not None:
-            epochs_without_improvement += 1
-            if epochs_without_improvement >= early_stopping_patience:
-                history["stopped_early"] = True
-                print(
-                    f"Early stopping at epoch {epoch}: "
-                    f"no improvement in {monitor_name} for {early_stopping_patience} epochs."
+            if scheduler is not None:
+                scheduler.step(monitor_value)
+
+            if progress_bar is not None:
+                progress_bar.set_description(f"Epoch {epoch + 1}/{epochs}")
+                progress_bar.set_postfix(
+                    _build_progress_postfix(train_loss, val_metrics, test_metrics, optimizer)
                 )
-                break
+            elif verbose_every and epoch % verbose_every == 0:
+                progress_parts = [_format_progress("Train", train_loss)]
+                if val_metrics is not None:
+                    progress_parts.append(_format_progress("Val", *val_metrics))
+                if test_metrics is not None:
+                    progress_parts.append(_format_progress("Test", *test_metrics))
+                print(f"Epoch {epoch}: " + ", ".join(progress_parts))
+
+            if monitor_value < best_monitor_value - early_stopping_min_delta:
+                best_monitor_value = monitor_value
+                best_model_state = copy.deepcopy(model.state_dict())
+                history["best_epoch"] = epoch
+                history["best_monitor_value"] = monitor_value
+                epochs_without_improvement = 0
+            elif early_stopping_patience is not None:
+                epochs_without_improvement += 1
+                if epochs_without_improvement >= early_stopping_patience:
+                    history["stopped_early"] = True
+                    _write_progress_message(
+                        progress_bar,
+                        f"Early stopping at epoch {epoch}: "
+                        f"no improvement in {monitor_name} for {early_stopping_patience} epochs.",
+                    )
+                    break
+    finally:
+        if progress_bar is not None:
+            progress_bar.close()
 
     model.load_state_dict(best_model_state)
     history["epochs_ran"] = len(history["train_loss"])

@@ -346,3 +346,74 @@ def test_train_uses_validation_loader_for_early_stopping():
     assert history["stopped_early"] is True
     assert history["epochs_ran"] == 3
     assert len(history["val_loss"]) == history["epochs_ran"]
+
+
+def test_train_updates_tqdm_progress_bar():
+    class ConstantModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.bias = nn.Parameter(torch.tensor([1.0]))
+
+        def forward(self, batch):
+            return self.bias.expand(batch.y.shape[0], 1)
+
+    class FakeTqdm:
+        def __init__(self, iterable, **kwargs):
+            self.iterable = iterable
+            self.kwargs = kwargs
+            self.descriptions = []
+            self.postfixes = []
+            self.messages = []
+            self.closed = False
+
+        def __iter__(self):
+            return iter(self.iterable)
+
+        def set_description(self, description):
+            self.descriptions.append(description)
+
+        def set_postfix(self, postfix):
+            self.postfixes.append(dict(postfix))
+
+        def write(self, message):
+            self.messages.append(message)
+
+        def close(self):
+            self.closed = True
+
+    train_loader = [LoaderBatch(y=torch.zeros(4))]
+    val_loader = [LoaderBatch(y=torch.zeros(4))]
+    model = ConstantModel()
+    progress_bars = []
+
+    def fake_tqdm(iterable, **kwargs):
+        progress_bar = FakeTqdm(iterable, **kwargs)
+        progress_bars.append(progress_bar)
+        return progress_bar
+
+    with patch("src.training.loops.tqdm", fake_tqdm):
+        train(
+            model,
+            train_loader,
+            loss_fn=nn.MSELoss(),
+            optimizer=torch.optim.SGD(model.parameters(), lr=0.0),
+            scheduler=None,
+            epochs=2,
+            device="cpu",
+            val_loader=val_loader,
+            verbose_every=1,
+        )
+
+    assert len(progress_bars) == 1
+
+    progress_bar = progress_bars[0]
+    assert progress_bar.kwargs["total"] == 2
+    assert progress_bar.kwargs["unit"] == "epoch"
+    assert progress_bar.descriptions == ["Epoch 1/2", "Epoch 2/2"]
+    assert progress_bar.postfixes[-1]["train_loss"] == "1.0000"
+    assert progress_bar.postfixes[-1]["val_loss"] == "1.0000"
+    assert progress_bar.postfixes[-1]["val_rmse"] == "1.0000"
+    assert progress_bar.postfixes[-1]["val_mae"] == "1.0000"
+    assert progress_bar.postfixes[-1]["lr"] == "0.00e+00"
+    assert progress_bar.messages == []
+    assert progress_bar.closed is True

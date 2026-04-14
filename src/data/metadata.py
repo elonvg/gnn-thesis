@@ -6,10 +6,10 @@ def sequential_encoder(df, embedding_keys):
 
     for col in embedding_keys:
         unique_ids = df[col].dropna().unique()
-        id_to_idx = {id_val: idx + 1 for idx, id_val in enumerate(unique_ids)}
+        id_to_idx = {id_val: idx for idx, id_val in enumerate(unique_ids)}
 
         encoders[col] = id_to_idx
-        df[col] = df[col].map(id_to_idx).fillna(0).astype(int)
+        df[col] = df[col].map(id_to_idx).fillna(-1).astype(int)
 
     return df, encoders
 
@@ -23,12 +23,12 @@ def _metadata_columns(embedding_size):
 def build_config(df_tax, embedding_size):
     if isinstance(embedding_size, dict):
         return {
-            col: (df_tax[col].nunique() + 1, dim)
+            col: (df_tax[col].nunique(), dim)
             for col, dim in embedding_size.items()
         }
 
     return {
-        col: df_tax[col].nunique() + 1
+        col: df_tax[col].nunique()
         for col in embedding_size
     }
 

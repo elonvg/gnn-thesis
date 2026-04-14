@@ -12,7 +12,9 @@ def _num_classes_from_config(value):
 
 
 class NumericalEncoder(nn.Module):
-    def __init__(self, numerical_columns=None, output_dim=16):
+    # Numerical encoder for metadata such as duration, fragment_count, is_single_node
+
+    def __init__(self, numerical_columns=None, output_dim=16, dropout=0.2):
         super().__init__()
 
         self.numerical_columns = list(numerical_columns or ["duration"])
@@ -22,7 +24,7 @@ class NumericalEncoder(nn.Module):
         self.projection = nn.Sequential(
             nn.Linear(self.input_dim, output_dim),
             nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.Dropout(dropout)
         )
 
     def forward(self, data):
@@ -39,7 +41,9 @@ class NumericalEncoder(nn.Module):
 
 
 class TaxonomyEncoder(nn.Module):
-    def __init__(self, config, output_dim=64):
+    # Embedding for taxonomy data
+
+    def __init__(self, config, output_dim=64, dropout=0.2):
         # config is a dict mapping feature_tax -> (num_unique_values, embedding_dim)
         super().__init__()
 
@@ -52,7 +56,7 @@ class TaxonomyEncoder(nn.Module):
         # Calculate the total size of the concatenated vector
         self.raw_dim = sum(dim for _, dim in config.values())
 
-         # Project to fixed output size regardless of which features are selected
+        # Project to fixed output size regardless of which features are selected
         self.projection = nn.Sequential(
             nn.Linear(self.raw_dim, output_dim),
             nn.ReLU(),
@@ -75,7 +79,9 @@ class TaxonomyEncoder(nn.Module):
 
 
 class TaxonomyOneHot(nn.Module):
-    def __init__(self, config, output_dim=64):
+    # One-hot encoder for taxonomy data
+
+    def __init__(self, config, output_dim=64, dropout=0.2):
         super().__init__()
 
         self.num_classes = {
@@ -87,7 +93,7 @@ class TaxonomyOneHot(nn.Module):
         self.projection = nn.Sequential(
             nn.Linear(self.raw_dim, output_dim),
             nn.ReLU(),
-            nn.Dropout(0.1)
+            nn.Dropout(dropout)
         )
 
     def forward(self, data):
@@ -102,7 +108,9 @@ class TaxonomyOneHot(nn.Module):
 
 
 class CategoricalOneHot(nn.Module):
-    def __init__(self, config, output_dim=32):
+    # One-hot encoder for metadata such as endpoint, effect, conc_unit etc.
+
+    def __init__(self, config, output_dim=32, dropout=0.2):
         super().__init__()
 
         self.num_classes = {
@@ -114,7 +122,7 @@ class CategoricalOneHot(nn.Module):
         self.projection = nn.Sequential(
             nn.Linear(self.raw_dim, output_dim),
             nn.ReLU(),
-            nn.Dropout(0.1)
+            nn.Dropout(dropout)
         )
 
     def forward(self, data):
@@ -127,52 +135,46 @@ class CategoricalOneHot(nn.Module):
         concatenated = torch.cat(encoded_list, dim=-1)
         return self.projection(concatenated)
 
-
 class MetaEncoder(nn.Module):
+    # Main meta encoder
+
     def __init__(
         self,
-        numeric_output_dim=16,
-        tax_output_dim=64,
-        categorical_output_dim=16,
-        numerical_encoder_cls=NumericalEncoder,
-        numerical_columns=None,
         taxonomy_encoder_cls=TaxonomyEncoder,
         config_tax=None,
-        categorical_encoder_cls=CategoricalOneHot,
-        config_categorical=None,
+        tax_output_dim=64,
         pretrained_taxid_encoder_cls=PretrainedTaxidEncoder,
-        pretrained_taxid_output_dim=64,
         pretrained_taxid_path=None,
         pretrained_taxid_field="taxid_raw",
         pretrained_taxid_encoder_kwargs=None,
-        hidden_dim=None,
-        output_dim=None,
-        meta_dim=None,
-        categorical_config=None,
+        pretrained_taxid_output_dim=64,
+        categorical_encoder_cls=CategoricalOneHot,
+        config_categorical=None,
+        categorical_output_dim=16,
+        numerical_encoder_cls=NumericalEncoder,
+        numerical_columns=None,
+        numeric_output_dim=16,
+        dropout=0.2
     ):
         super().__init__()
 
-        if hidden_dim is not None:
-            numeric_output_dim = hidden_dim
-        if output_dim is not None:
-            tax_output_dim = output_dim
-        if categorical_config is not None and config_categorical is None:
-            config_categorical = categorical_config
-
-        self.encoder_numeric = numerical_encoder_cls(
-            numerical_columns=numerical_columns or ["duration"],
-            output_dim=numeric_output_dim,
-        )
-
-        self.encoder_tax = taxonomy_encoder_cls(
+        self.tax_encoder = taxonomy_encoder_cls(
             config_tax,
-            output_dim=tax_output_dim
+            output_dim=tax_output_dim,
+            dropout=dropout
         ) if config_tax else None
 
-        self.encoder_categorical = categorical_encoder_cls(
+        self.categorical_encoder = categorical_encoder_cls(
             config_categorical,
             output_dim=categorical_output_dim,
+            dropout=dropout
         ) if config_categorical else None
+
+        self.numeric_encoder = numerical_encoder_cls(
+            numerical_columns=numerical_columns,
+            output_dim=numeric_output_dim,
+            dropout=dropout
+        ) if numerical_columns else None
 
         pretrained_taxid_encoder_kwargs = dict(pretrained_taxid_encoder_kwargs or {})
         if pretrained_taxid_path is not None:
@@ -187,28 +189,37 @@ class MetaEncoder(nn.Module):
                 or "taxonomic_embedding_dict" in pretrained_taxid_encoder_kwargs
             )
         )
-        self.encoder_pretrained_taxid = (
+        self.pretrained_taxid_encoder = (
             pretrained_taxid_encoder_cls(**pretrained_taxid_encoder_kwargs)
             if use_pretrained_taxid
             else None
         )
 
-        self.output_dim = self.encoder_numeric.output_dim
-        if self.encoder_tax is not None:
+        self.output_dim = 0
+        if self.numeric_encoder is not None:
+            self.output_dim = self.numeric_encoder.output_dim
+        if self.tax_encoder is not None:
             self.output_dim += tax_output_dim
-        if self.encoder_categorical is not None:
+        if self.categorical_encoder is not None:
             self.output_dim += categorical_output_dim
-        if self.encoder_pretrained_taxid is not None:
-            self.output_dim += self.encoder_pretrained_taxid.output_dim
+        if self.pretrained_taxid_encoder is not None:
+            self.output_dim += self.pretrained_taxid_encoder.output_dim
 
     def forward(self, data):
-        encoded_parts = [self.encoder_numeric(data)]
 
-        if self.encoder_tax is not None:
-            encoded_parts.append(self.encoder_tax(data))
-        if self.encoder_categorical is not None:
-            encoded_parts.append(self.encoder_categorical(data))
-        if self.encoder_pretrained_taxid is not None:
-            encoded_parts.append(self.encoder_pretrained_taxid(data))
+        encoded_parts = []
+
+        if self.tax_encoder is not None:
+            encoded_parts.append(self.tax_encoder(data))
+
+        if self.pretrained_taxid_encoder is not None:
+            encoded_parts.append(self.pretrained_taxid_encoder(data))
+
+        if self.categorical_encoder is not None:
+            encoded_parts.append(self.categorical_encoder(data))
+        
+        if self.numeric_encoder is not None:
+            encoded_parts.append(self.numeric_encoder(data))
+
 
         return torch.cat(encoded_parts, dim=-1)

@@ -30,6 +30,7 @@ def build_graph_features(
     for row_idx, graph in enumerate(df["features"]):
         graph.x = graph.x.float()
         graph.y = torch.tensor(df.iloc[row_idx]["log10c"], dtype=torch.float)
+        graph.row_id = torch.tensor(row_idx, dtype=torch.long)
 
         for col in df_tax.columns:
             setattr(graph, col, torch.tensor(df_tax.iloc[row_idx][col], dtype=torch.long))

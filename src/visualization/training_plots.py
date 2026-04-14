@@ -18,11 +18,6 @@ def plot_toxicity_distribution(train_dataset, test_dataset, val_dataset=None):
     plt.title(title)
     plt.show()
 
-    print(f"Train mean: {np.mean(train_y):.2f}, std: {np.std(train_y):.2f}")
-    if val_y is not None:
-        print(f"Val mean:   {np.mean(val_y):.2f}, std: {np.std(val_y):.2f}")
-    print(f"Test mean:  {np.mean(test_y):.2f},  std: {np.std(test_y):.2f}")
-
 
 def plot_training(history, figsize=(10, 6)):
     plt.figure(figsize=figsize)
@@ -51,4 +46,40 @@ def plot_training(history, figsize=(10, 6)):
     plt.legend()
     plt.grid()
     plt.tight_layout()
+    plt.show()
+
+
+def plot_training_metrics(history, metrics=None, prefixes=None, figsize=(15, 4)):
+    metrics = list(metrics or ["loss", "rmse", "mae"])
+    prefixes = list(prefixes or ["train", "val", "test"])
+
+    available_metrics = []
+    for metric in metrics:
+        keys = [f"{prefix}_{metric}" for prefix in prefixes if history.get(f"{prefix}_{metric}")]
+        if keys:
+            available_metrics.append(metric)
+
+    if not available_metrics:
+        raise ValueError("No requested metrics were found in the training history.")
+
+    fig, axes = plt.subplots(1, len(available_metrics), figsize=figsize, squeeze=False)
+
+    for ax, metric in zip(axes[0], available_metrics):
+        for prefix in prefixes:
+            key = f"{prefix}_{metric}"
+            values = history.get(key)
+            if values:
+                ax.plot(values, label=prefix.capitalize())
+
+        best_epoch = history.get("best_epoch")
+        if best_epoch is not None:
+            ax.axvline(best_epoch, color="k", linestyle="--", alpha=0.4)
+
+        ax.set_title(metric.upper())
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(metric.upper())
+        ax.grid(alpha=0.3)
+        ax.legend()
+
+    fig.tight_layout()
     plt.show()
