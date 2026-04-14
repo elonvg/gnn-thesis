@@ -417,3 +417,55 @@ def test_train_updates_tqdm_progress_bar():
     assert progress_bar.postfixes[-1]["lr"] == "0.00e+00"
     assert progress_bar.messages == []
     assert progress_bar.closed is True
+
+
+def test_train_can_log_metrics_to_a_run():
+    class ConstantModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.bias = nn.Parameter(torch.tensor([1.0]))
+
+        def forward(self, batch):
+            return self.bias.expand(batch.y.shape[0], 1)
+
+    class FakeRun:
+        def __init__(self):
+            self.logged = []
+            self.summary = {}
+
+        def log(self, metrics):
+            self.logged.append(dict(metrics))
+
+    train_loader = [LoaderBatch(y=torch.zeros(4))]
+    val_loader = [LoaderBatch(y=torch.zeros(4))]
+    test_loader = [LoaderBatch(y=torch.zeros(4))]
+    model = ConstantModel()
+    run = FakeRun()
+
+    _, history = train(
+        model,
+        train_loader,
+        test_loader=test_loader,
+        loss_fn=nn.MSELoss(),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.0),
+        scheduler=None,
+        epochs=2,
+        device="cpu",
+        val_loader=val_loader,
+        verbose_every=0,
+        run=run,
+    )
+
+    assert len(run.logged) == history["epochs_ran"]
+    assert run.logged[0]["epoch"] == 1
+    assert run.logged[0]["train/loss"] == 1.0
+    assert run.logged[0]["val/loss"] == 1.0
+    assert run.logged[0]["val/rmse"] == 1.0
+    assert run.logged[0]["val/mae"] == 1.0
+    assert run.logged[0]["test/loss"] == 1.0
+    assert run.logged[0]["test/rmse"] == 1.0
+    assert run.logged[0]["test/mae"] == 1.0
+    assert run.logged[0]["optimizer/lr"] == 0.0
+    assert run.summary["best_epoch"] == 0
+    assert run.summary["monitor_name"] == "val_loss"
+    assert run.summary["epochs_ran"] == history["epochs_ran"]

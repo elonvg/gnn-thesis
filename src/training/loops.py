@@ -141,6 +141,43 @@ def _build_progress_postfix(train_loss, val_metrics=None, test_metrics=None, opt
     return postfix
 
 
+def _current_lr(optimizer):
+    if optimizer is None or not optimizer.param_groups:
+        return None
+    return optimizer.param_groups[0].get("lr")
+
+
+def _build_run_log(epoch, train_loss, val_metrics=None, test_metrics=None, optimizer=None):
+    metrics = {
+        "epoch": epoch + 1,
+        "train/loss": train_loss,
+    }
+
+    if val_metrics is not None:
+        metrics.update(
+            {
+                "val/loss": val_metrics[0],
+                "val/rmse": val_metrics[1],
+                "val/mae": val_metrics[2],
+            }
+        )
+
+    if test_metrics is not None:
+        metrics.update(
+            {
+                "test/loss": test_metrics[0],
+                "test/rmse": test_metrics[1],
+                "test/mae": test_metrics[2],
+            }
+        )
+
+    lr = _current_lr(optimizer)
+    if lr is not None:
+        metrics["optimizer/lr"] = lr
+
+    return metrics
+
+
 def _write_progress_message(progress_bar, message):
     if progress_bar is not None:
         progress_bar.write(message)
@@ -162,6 +199,7 @@ def train(
     early_stopping_patience=None,
     early_stopping_min_delta=0.0,
     verbose_every=10,
+    run=None,
 ):
     model = model.to(device)
 
@@ -228,6 +266,17 @@ def train(
                     progress_parts.append(_format_progress("Test", *test_metrics))
                 print(f"Epoch {epoch}: " + ", ".join(progress_parts))
 
+            if run is not None:
+                run.log(
+                    _build_run_log(
+                        epoch,
+                        train_loss,
+                        val_metrics=val_metrics,
+                        test_metrics=test_metrics,
+                        optimizer=optimizer,
+                    )
+                )
+
             if monitor_value < best_monitor_value - early_stopping_min_delta:
                 best_monitor_value = monitor_value
                 best_model_state = copy.deepcopy(model.state_dict())
@@ -250,5 +299,16 @@ def train(
 
     model.load_state_dict(best_model_state)
     history["epochs_ran"] = len(history["train_loss"])
+
+    if run is not None:
+        run.summary.update(
+            {
+                "best_epoch": history["best_epoch"],
+                "best_monitor_value": history["best_monitor_value"],
+                "monitor_name": history["monitor_name"],
+                "stopped_early": history["stopped_early"],
+                "epochs_ran": history["epochs_ran"],
+            }
+        )
 
     return model, history
