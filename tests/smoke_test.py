@@ -4,10 +4,18 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import torch
 import torch.nn as nn
 
-from src.data.splitting import _build_smiles_index_lookup, _take_split_indices, butina_split
+from src.data.splitting import (
+    _build_smiles_index_lookup,
+    _take_split_indices,
+    build_attribute_sampling_weights,
+    build_weighted_random_sampler,
+    butina_split,
+    compute_attribute_distribution,
+)
 from src.models.meta_encoder import (
     CategoricalOneHot,
     MetaEncoder,
@@ -221,6 +229,42 @@ def test_take_split_indices_preserves_duplicate_rows():
     assert train_indices == [0, 1, 2]
     assert test_indices == [3, 4]
     assert set(train_indices).isdisjoint(test_indices)
+
+
+def test_compute_attribute_distribution_reads_scalar_tensor_attributes():
+    dataset = [
+        SimpleNamespace(species_group=torch.tensor(1, dtype=torch.long)),
+        SimpleNamespace(species_group=torch.tensor(1, dtype=torch.long)),
+        SimpleNamespace(species_group=torch.tensor(2, dtype=torch.long)),
+    ]
+
+    distribution = compute_attribute_distribution(dataset, "species_group")
+
+    assert distribution == pytest.approx({1: 2 / 3, 2: 1 / 3})
+
+
+def test_weighted_sampler_weights_match_reference_distribution_for_present_species():
+    dataset = [
+        SimpleNamespace(species_group=torch.tensor(1, dtype=torch.long)),
+        SimpleNamespace(species_group=torch.tensor(1, dtype=torch.long)),
+        SimpleNamespace(species_group=torch.tensor(1, dtype=torch.long)),
+        SimpleNamespace(species_group=torch.tensor(2, dtype=torch.long)),
+    ]
+
+    weights = build_attribute_sampling_weights(
+        dataset,
+        "species_group",
+        target_distribution={1: 0.4, 2: 0.4, 3: 0.2},
+    )
+    sampler = build_weighted_random_sampler(
+        dataset,
+        "species_group",
+        target_distribution={1: 0.4, 2: 0.4, 3: 0.2},
+    )
+
+    assert weights.tolist() == pytest.approx([1 / 6, 1 / 6, 1 / 6, 1 / 2])
+    assert sampler.weights.tolist() == pytest.approx([1 / 6, 1 / 6, 1 / 6, 1 / 2])
+    assert sampler.num_samples == len(dataset)
 
 
 def test_butina_split_returns_validation_split_without_reusing_duplicate_rows():

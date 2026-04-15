@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 import torch
 import torch.nn as nn
 
@@ -92,3 +93,47 @@ def test_summarize_by_group_uses_train_means_with_global_fallback():
     assert abs(fish_row["model_mae"] - 0.2) < 1e-9
     assert abs(fish_row["mae_gain"] - 0.8) < 1e-9
     assert abs(mollusk_row["baseline_mae"] - 1.5) < 1e-9
+    assert fish_row["train_n"] == 2
+    assert fish_row["baseline_source"] == "train_group_mean"
+    assert mollusk_row["train_n"] == 0
+    assert mollusk_row["baseline_source"] == "global_train_mean"
+
+
+def test_summarize_by_group_accepts_actual_log10c_training_column():
+    train_df = pd.DataFrame(
+        {
+            "species_group": ["fish", "fish", "algae"],
+            "actual_log10c": [1.0, 3.0, 10.0],
+        }
+    )
+    results_df = pd.DataFrame(
+        {
+            "species_group": ["fish", "algae"],
+            "actual_log10c": [2.0, 10.0],
+            "pred_log10c": [2.5, 9.0],
+        }
+    )
+
+    summary = summarize_by_group(results_df, train_df, "species_group", min_count=1)
+
+    fish_row = summary.loc[summary["group"] == "fish"].iloc[0]
+
+    assert fish_row["train_n"] == 2
+    assert fish_row["baseline_source"] == "train_group_mean"
+    assert abs(fish_row["baseline_log10c"] - 2.0) < 1e-9
+    assert abs(fish_row["baseline_mae"] - 0.0) < 1e-9
+    assert abs(fish_row["model_mae"] - 0.5) < 1e-9
+
+
+def test_summarize_by_group_requires_train_target_column():
+    train_df = pd.DataFrame({"species_group": ["fish", "algae"]})
+    results_df = pd.DataFrame(
+        {
+            "species_group": ["fish"],
+            "actual_log10c": [1.0],
+            "pred_log10c": [1.2],
+        }
+    )
+
+    with pytest.raises(KeyError, match="train_df must include one of the training target columns"):
+        summarize_by_group(results_df, train_df, "species_group", min_count=1)

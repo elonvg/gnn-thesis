@@ -1,4 +1,4 @@
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from functools import lru_cache
 import hashlib
 import random
@@ -144,6 +144,112 @@ def _take_split_indices(split_smiles, indices_by_smile):
 
 def _subset_features(features, indices):
     return [deepcopy(features[i]) for i in indices]
+
+
+def _normalize_attribute_value(value):
+    if torch.is_tensor(value):
+        if value.numel() != 1:
+            raise ValueError("Weighted sampling expects scalar graph attributes per item.")
+        value = value.item()
+
+    if isinstance(value, np.generic):
+        value = value.item()
+
+    if pd.isna(value):
+        return None
+
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+
+    return value
+
+
+def collect_attribute_values(dataset, attribute_name):
+    values = []
+
+    for idx, item in enumerate(dataset):
+        if not hasattr(item, attribute_name):
+            raise AttributeError(
+                f"Dataset item at index {idx} is missing attribute {attribute_name!r}, "
+                "which is required for weighted sampling."
+            )
+
+        values.append(_normalize_attribute_value(getattr(item, attribute_name)))
+
+    return values
+
+
+def compute_attribute_distribution(dataset, attribute_name):
+    values = collect_attribute_values(dataset, attribute_name)
+    if not values:
+        return {}
+
+    counts = Counter(values)
+    total = float(len(values))
+    return {label: count / total for label, count in counts.items()}
+
+
+def build_attribute_sampling_weights(dataset, attribute_name, target_distribution=None):
+    values = collect_attribute_values(dataset, attribute_name)
+    if not values:
+        raise ValueError("Weighted sampling requires a non-empty dataset.")
+
+    counts = Counter(values)
+
+    if target_distribution is None:
+        target_distribution = {
+            label: count / len(values)
+            for label, count in counts.items()
+        }
+    else:
+        normalized_target = {}
+        for label, weight in target_distribution.items():
+            normalized_label = _normalize_attribute_value(label)
+            normalized_weight = float(weight)
+            if normalized_weight < 0:
+                raise ValueError("target_distribution weights must be non-negative.")
+            normalized_target[normalized_label] = normalized_weight
+        target_distribution = normalized_target
+
+    present_target_mass = sum(target_distribution.get(label, 0.0) for label in counts)
+    if present_target_mass <= 0:
+        raise ValueError(
+            f"target_distribution does not assign any positive mass to labels present in "
+            f"attribute {attribute_name!r}."
+        )
+
+    normalized_target = {
+        label: target_distribution.get(label, 0.0) / present_target_mass
+        for label in counts
+    }
+
+    return torch.tensor(
+        [normalized_target[label] / counts[label] for label in values],
+        dtype=torch.double,
+    )
+
+
+def build_weighted_random_sampler(
+    dataset,
+    attribute_name,
+    target_distribution=None,
+    num_samples=None,
+    replacement=True,
+):
+    """Build a WeightedRandomSampler that matches a target attribute distribution in expectation."""
+    weights = build_attribute_sampling_weights(
+        dataset,
+        attribute_name=attribute_name,
+        target_distribution=target_distribution,
+    )
+    if num_samples is None:
+        num_samples = len(weights)
+
+    return torch.utils.data.WeightedRandomSampler(
+        weights=weights,
+        num_samples=num_samples,
+        replacement=replacement,
+    )
 
 
 def _butina_train_test_indices(features, train_size, test_size):
@@ -296,7 +402,7 @@ def butina_split(
     cluster_column="Cluster_at_cutoff_0.3",
 ):
     if cluster_csv_path is not None:
-        print("Using csv file")
+        print("Using csv file for butina split")
         return butina_split_from_csv(
             features,
             cluster_csv_path=cluster_csv_path,
