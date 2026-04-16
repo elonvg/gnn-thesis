@@ -144,8 +144,8 @@ class MetaEncoder(nn.Module):
         config_tax=None,
         tax_output_dim=64,
         pretrained_taxid_encoder_cls=PretrainedTaxidEncoder,
+        pretrained_tax_dim=768,
         pretrained_taxid_path=None,
-        pretrained_taxid_field="taxid_raw",
         pretrained_taxid_encoder_kwargs=None,
         pretrained_taxid_output_dim=64,
         categorical_encoder_cls=CategoricalOneHot,
@@ -176,11 +176,11 @@ class MetaEncoder(nn.Module):
             dropout=dropout
         ) if numerical_columns else None
 
-        pretrained_taxid_encoder_kwargs = dict(pretrained_taxid_encoder_kwargs or {})
-        if pretrained_taxid_path is not None:
-            pretrained_taxid_encoder_kwargs.setdefault("embedding_path", pretrained_taxid_path)
-        pretrained_taxid_encoder_kwargs.setdefault("output_dim", pretrained_taxid_output_dim)
-        pretrained_taxid_encoder_kwargs.setdefault("taxid_field", pretrained_taxid_field)
+        # pretrained_taxid_encoder_kwargs = dict(pretrained_taxid_encoder_kwargs or {})
+        # if pretrained_taxid_path is not None:
+        #     pretrained_taxid_encoder_kwargs.setdefault("embedding_path", pretrained_taxid_path)
+        # pretrained_taxid_encoder_kwargs.setdefault("output_dim", pretrained_taxid_output_dim)
+        # pretrained_taxid_encoder_kwargs.setdefault("taxid_field", pretrained_taxid_field)
 
         use_pretrained_taxid = (
             pretrained_taxid_encoder_cls is not None
@@ -189,8 +189,14 @@ class MetaEncoder(nn.Module):
                 or "taxonomic_embedding_dict" in pretrained_taxid_encoder_kwargs
             )
         )
-        self.pretrained_taxid_encoder = (
-            pretrained_taxid_encoder_cls(**pretrained_taxid_encoder_kwargs)
+        self.pretrained_taxid_encoder = (pretrained_taxid_encoder_cls(
+            embedding_path=pretrained_taxid_path,
+            taxonomic_embedding_dict=None,
+            embedding_dim=pretrained_tax_dim,
+            output_dim=pretrained_taxid_output_dim,
+            dropout=dropout,
+            taxid_field="taxid_raw"
+        )
             if use_pretrained_taxid
             else None
         )
