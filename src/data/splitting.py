@@ -1,122 +1,15 @@
 from collections import Counter, defaultdict, deque
 from functools import lru_cache
-import hashlib
-import random
 from copy import deepcopy
 
 import numpy as np
 import pandas as pd
-import rdkit
 import torch
-from rdkit.Chem import AllChem
-from rdkit.Chem.Scaffolds import MurckoScaffold
 
 try:
     from skfp.model_selection import butina_train_test_split
 except ImportError:
     butina_train_test_split = None
-
-
-def generate_scaffold(smiles, include_chirality=False, radius=2):
-    mol = rdkit.Chem.MolFromSmiles(smiles)
-    scaffold = MurckoScaffold.MurckoScaffoldSmiles(smiles=smiles, includeChirality=include_chirality)
-
-    if scaffold == "":
-        info = {}
-        AllChem.GetMorganFingerprint(mol, radius=radius, bitInfo=info)
-        scaffold = hashlib.md5(str(sorted(info.keys())).encode()).hexdigest()
-
-    return scaffold
-
-
-def scaffold_split(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0, seed=None):
-    assert abs(frac_train + frac_test + frac_valid - 1.0) < 1e-6
-
-    if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-
-    n = len(features)
-    all_scaffolds = {}
-    for i in range(n):
-        scaffold = generate_scaffold(smiles=features[i].smiles, include_chirality=False)
-        if scaffold not in all_scaffolds:
-            all_scaffolds[scaffold] = [i]
-        else:
-            all_scaffolds[scaffold].append(i)
-
-    scaffold_sets = sorted(all_scaffolds.values(), key=lambda x: len(x), reverse=True)
-
-    train_indices, test_indices, val_indices = [], [], []
-    train_cutoff = frac_train * n
-    val_cutoff = (frac_train + frac_valid) * n
-
-    for scaffold_set in scaffold_sets:
-        if len(train_indices) + len(scaffold_set) <= train_cutoff:
-            train_indices.extend(scaffold_set)
-        elif len(train_indices) + len(val_indices) + len(scaffold_set) <= val_cutoff:
-            val_indices.extend(scaffold_set)
-        else:
-            test_indices.extend(scaffold_set)
-
-    train_dataset = [features[i] for i in train_indices]
-    test_dataset = [features[i] for i in test_indices]
-    val_dataset = [features[i] for i in val_indices]
-
-    return train_dataset, test_dataset, val_dataset
-
-
-def scaffold_split_ac(features, frac_train=0.8, frac_test=0.2, frac_valid=0.0, seed=None):
-    assert abs(frac_train + frac_test + frac_valid - 1.0) < 1e-6
-
-    if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-
-    n = len(features)
-    all_scaffolds = {}
-    acyclic_indices = []
-
-    for i in range(n):
-        scaffold = generate_scaffold(smiles=features[i].smiles, include_chirality=False)
-        if scaffold == "":
-            acyclic_indices.append(i)
-            continue
-        if scaffold not in all_scaffolds:
-            all_scaffolds[scaffold] = [i]
-        else:
-            all_scaffolds[scaffold].append(i)
-
-    scaffold_sets = sorted(all_scaffolds.values(), key=lambda x: len(x), reverse=True)
-
-    train_indices, test_indices, val_indices = [], [], []
-    train_cutoff = frac_train * n
-    val_cutoff = (frac_train + frac_valid) * n
-
-    for scaffold_set in scaffold_sets:
-        if len(train_indices) + len(scaffold_set) <= train_cutoff:
-            train_indices.extend(scaffold_set)
-        elif len(train_indices) + len(val_indices) + len(scaffold_set) <= val_cutoff:
-            val_indices.extend(scaffold_set)
-        else:
-            test_indices.extend(scaffold_set)
-
-    random.shuffle(acyclic_indices)
-    n_acyclic = len(acyclic_indices)
-    n_train = round(frac_train * n_acyclic)
-    n_val = round(frac_valid * n_acyclic)
-
-    train_indices.extend(acyclic_indices[:n_train])
-    val_indices.extend(acyclic_indices[n_train:n_train + n_val])
-    test_indices.extend(acyclic_indices[n_train + n_val:])
-
-    train_dataset = [deepcopy(features[i]) for i in train_indices]
-    test_dataset = [deepcopy(features[i]) for i in test_indices]
-    val_dataset = [deepcopy(features[i]) for i in val_indices]
-
-    return train_dataset, test_dataset, val_dataset
 
 
 def _build_smiles_index_lookup(smiles_list):
@@ -149,7 +42,7 @@ def _subset_features(features, indices):
 def _normalize_attribute_value(value):
     if torch.is_tensor(value):
         if value.numel() != 1:
-            raise ValueError("Weighted sampling expects scalar graph attributes per item.")
+            raise ValueError("Stratified splitting expects scalar graph attributes per item.")
         value = value.item()
 
     if isinstance(value, np.generic):
@@ -164,92 +57,225 @@ def _normalize_attribute_value(value):
     return value
 
 
-def collect_attribute_values(dataset, attribute_name):
+def _normalize_stratify_by(stratify_by):
+    if stratify_by is None:
+        return None
+
+    if isinstance(stratify_by, str):
+        attribute_names = (stratify_by,)
+    else:
+        attribute_names = tuple(stratify_by)
+
+    if not attribute_names:
+        raise ValueError("stratify_by must contain at least one attribute name.")
+
+    for attribute_name in attribute_names:
+        if not isinstance(attribute_name, str) or not attribute_name:
+            raise ValueError("stratify_by must contain non-empty attribute names.")
+
+    return attribute_names
+
+
+def _feature_stratum_key(feature, attribute_names, feature_index):
     values = []
 
-    for idx, item in enumerate(dataset):
-        if not hasattr(item, attribute_name):
+    for attribute_name in attribute_names:
+        if not hasattr(feature, attribute_name):
             raise AttributeError(
-                f"Dataset item at index {idx} is missing attribute {attribute_name!r}, "
-                "which is required for weighted sampling."
+                f"Feature at index {feature_index} is missing attribute {attribute_name!r}, "
+                "which is required for stratified splitting."
             )
 
-        values.append(_normalize_attribute_value(getattr(item, attribute_name)))
+        values.append(_normalize_attribute_value(getattr(feature, attribute_name)))
 
-    return values
+    if len(values) == 1:
+        return values[0]
 
-
-def compute_attribute_distribution(dataset, attribute_name):
-    values = collect_attribute_values(dataset, attribute_name)
-    if not values:
-        return {}
-
-    counts = Counter(values)
-    total = float(len(values))
-    return {label: count / total for label, count in counts.items()}
+    return tuple(values)
 
 
-def build_attribute_sampling_weights(dataset, attribute_name, target_distribution=None):
-    values = collect_attribute_values(dataset, attribute_name)
-    if not values:
-        raise ValueError("Weighted sampling requires a non-empty dataset.")
-
-    counts = Counter(values)
-
-    if target_distribution is None:
-        target_distribution = {
-            label: count / len(values)
-            for label, count in counts.items()
-        }
-    else:
-        normalized_target = {}
-        for label, weight in target_distribution.items():
-            normalized_label = _normalize_attribute_value(label)
-            normalized_weight = float(weight)
-            if normalized_weight < 0:
-                raise ValueError("target_distribution weights must be non-negative.")
-            normalized_target[normalized_label] = normalized_weight
-        target_distribution = normalized_target
-
-    present_target_mass = sum(target_distribution.get(label, 0.0) for label in counts)
-    if present_target_mass <= 0:
-        raise ValueError(
-            f"target_distribution does not assign any positive mass to labels present in "
-            f"attribute {attribute_name!r}."
-        )
-
-    normalized_target = {
-        label: target_distribution.get(label, 0.0) / present_target_mass
-        for label in counts
+def _resolve_split_sizes(total_size, split_fractions):
+    expected_sizes = {
+        split_name: total_size * fraction
+        for split_name, fraction in split_fractions.items()
+    }
+    split_sizes = {
+        split_name: int(np.floor(expected_size))
+        for split_name, expected_size in expected_sizes.items()
     }
 
-    return torch.tensor(
-        [normalized_target[label] / counts[label] for label in values],
-        dtype=torch.double,
+    remaining = total_size - sum(split_sizes.values())
+    if remaining <= 0:
+        return split_sizes
+
+    split_order = sorted(
+        split_fractions,
+        key=lambda split_name: (
+            expected_sizes[split_name] - split_sizes[split_name],
+            split_fractions[split_name],
+        ),
+        reverse=True,
     )
 
+    for split_name in split_order[:remaining]:
+        split_sizes[split_name] += 1
 
-def build_weighted_random_sampler(
-    dataset,
-    attribute_name,
-    target_distribution=None,
-    num_samples=None,
-    replacement=True,
+    return split_sizes
+
+
+def _build_precomputed_cluster_records(
+    features,
+    cluster_csv_path,
+    cluster_column="Cluster_at_cutoff_0.3",
+    stratify_by=None,
 ):
-    """Build a WeightedRandomSampler that matches a target attribute distribution in expectation."""
-    weights = build_attribute_sampling_weights(
-        dataset,
-        attribute_name=attribute_name,
-        target_distribution=target_distribution,
-    )
-    if num_samples is None:
-        num_samples = len(weights)
+    smiles_to_cluster = load_precomputed_butina_clusters(cluster_csv_path, cluster_column) # dict mapping SMILES to cluster IDs from the CSV file
+    indices_by_cluster = defaultdict(list)
+    strata_counts_by_cluster = defaultdict(Counter)
+    total_strata_counts = Counter()
 
-    return torch.utils.data.WeightedRandomSampler(
-        weights=weights,
-        num_samples=num_samples,
-        replacement=replacement,
+    for idx, feature in enumerate(features):
+        cluster_key = _precomputed_cluster_key(feature.smiles, smiles_to_cluster)
+        indices_by_cluster[cluster_key].append(idx)
+
+        if stratify_by is not None:
+            stratum_key = _feature_stratum_key(feature, stratify_by, idx)
+            strata_counts_by_cluster[cluster_key][stratum_key] += 1
+            total_strata_counts[stratum_key] += 1
+
+    cluster_records = []
+    for cluster_key, indices in indices_by_cluster.items():
+        cluster_records.append(
+            {
+                "cluster_key": cluster_key,
+                "indices": indices,
+                "size": len(indices),
+                "strata_counts": strata_counts_by_cluster.get(cluster_key, Counter()),
+            }
+        )
+
+    return cluster_records, total_strata_counts
+
+
+def _cluster_sort_key(cluster_record, total_strata_counts):
+    if not cluster_record["strata_counts"]:
+        return (-cluster_record["size"], cluster_record["indices"][0])
+
+    rarest_label_count = min(
+        total_strata_counts[stratum_key]
+        for stratum_key in cluster_record["strata_counts"]
     )
+    return (
+        rarest_label_count,
+        -cluster_record["size"],
+        -len(cluster_record["strata_counts"]),
+        cluster_record["indices"][0],
+    )
+
+
+def _assignment_score(
+    split_name,
+    cluster_record,
+    split_sizes,
+    split_strata_counts,
+    target_sizes,
+    target_strata_counts,
+):
+    target_size = max(target_sizes[split_name], 1)
+    current_size = split_sizes[split_name]
+    new_size = current_size + cluster_record["size"]
+
+    current_size_gap = abs(current_size - target_sizes[split_name]) / target_size
+    new_size_gap = abs(new_size - target_sizes[split_name]) / target_size
+    current_overflow = max(0, current_size - target_sizes[split_name]) / target_size
+    new_overflow = max(0, new_size - target_sizes[split_name]) / target_size
+
+    current_counts = split_strata_counts[split_name]
+    target_counts = target_strata_counts[split_name]
+
+    current_strata_gap = sum(
+        abs(current_counts.get(stratum_key, 0) - target_count)
+        for stratum_key, target_count in target_counts.items()
+    ) / target_size
+    new_strata_gap = sum(
+        abs(
+            current_counts.get(stratum_key, 0)
+            + cluster_record["strata_counts"].get(stratum_key, 0)
+            - target_count
+        )
+        for stratum_key, target_count in target_counts.items()
+    ) / target_size
+
+    return (
+        6.0 * (new_overflow - current_overflow)
+        + 2.0 * (new_size_gap - current_size_gap)
+        + (new_strata_gap - current_strata_gap)
+    )
+
+
+def _stratified_precomputed_butina_split_indices(
+    features,
+    split_fractions,
+    cluster_csv_path,
+    cluster_column="Cluster_at_cutoff_0.3",
+    stratify_by=None,
+):
+    stratify_by = _normalize_stratify_by(stratify_by) # Get stratify_by in the right format (tuple of attribute names or None)
+    cluster_records, total_strata_counts = _build_precomputed_cluster_records(
+        features,
+        cluster_csv_path=cluster_csv_path,
+        cluster_column=cluster_column,
+        stratify_by=stratify_by,
+    )
+
+    if not cluster_records:
+        return {split_name: [] for split_name in split_fractions}
+
+    cluster_records = sorted(
+        cluster_records,
+        key=lambda cluster_record: _cluster_sort_key(cluster_record, total_strata_counts),
+    )
+
+    target_sizes = _resolve_split_sizes(len(features), split_fractions)
+    overall_strata_distribution = {
+        stratum_key: count / len(features)
+        for stratum_key, count in total_strata_counts.items()
+    }
+    target_strata_counts = {
+        split_name: {
+            stratum_key: target_sizes[split_name] * distribution
+            for stratum_key, distribution in overall_strata_distribution.items()
+        }
+        for split_name in split_fractions
+    }
+
+    assigned_indices = {split_name: [] for split_name in split_fractions}
+    split_sizes = {split_name: 0 for split_name in split_fractions}
+    split_strata_counts = {split_name: Counter() for split_name in split_fractions}
+
+    for cluster_record in cluster_records:
+        candidate_order = sorted(
+            split_fractions,
+            key=lambda split_name: (
+                _assignment_score(
+                    split_name,
+                    cluster_record,
+                    split_sizes,
+                    split_strata_counts,
+                    target_sizes,
+                    target_strata_counts,
+                ),
+                split_sizes[split_name] / max(target_sizes[split_name], 1),
+                -target_sizes[split_name],
+            ),
+        )
+        selected_split = candidate_order[0]
+
+        assigned_indices[selected_split].extend(cluster_record["indices"])
+        split_sizes[selected_split] += cluster_record["size"]
+        split_strata_counts[selected_split].update(cluster_record["strata_counts"])
+
+    return assigned_indices
 
 
 def _butina_train_test_indices(features, train_size, test_size):
@@ -337,8 +363,8 @@ def butina_split_from_csv(
     frac_test=0.2,
     frac_valid=0.0,
     cluster_column="Cluster_at_cutoff_0.3",
+    stratify_by=None,
 ):
-    """Split features by precomputed Butina cluster assignments from a CSV lookup."""
     assert abs(frac_train + frac_test + frac_valid - 1.0) < 1e-6
 
     total_size = len(features)
@@ -346,6 +372,29 @@ def butina_split_from_csv(
         if frac_valid > 0:
             return [], [], []
         return [], []
+
+    # Stratified splitting
+    if stratify_by is not None:
+        split_fractions = {"train": frac_train}
+        if frac_valid > 0.0:
+            split_fractions["valid"] = frac_valid
+        split_fractions["test"] = frac_test
+
+        split_indices = _stratified_precomputed_butina_split_indices(
+            features,
+            split_fractions=split_fractions,
+            cluster_csv_path=cluster_csv_path,
+            cluster_column=cluster_column,
+            stratify_by=stratify_by,
+        )
+
+        train_dataset = _subset_features(features, split_indices["train"])
+        test_dataset = _subset_features(features, split_indices["test"])
+        if frac_valid == 0.0:
+            return train_dataset, test_dataset
+
+        valid_dataset = _subset_features(features, split_indices["valid"])
+        return train_dataset, test_dataset, valid_dataset
 
     if frac_valid == 0.0:
         train_size = int(frac_train * total_size)
@@ -400,6 +449,7 @@ def butina_split(
     frac_valid=0.0,
     cluster_csv_path=None,
     cluster_column="Cluster_at_cutoff_0.3",
+    stratify_by=None,
 ):
     if cluster_csv_path is not None:
         print("Using csv file for butina split")
@@ -410,6 +460,12 @@ def butina_split(
             frac_test=frac_test,
             frac_valid=frac_valid,
             cluster_column=cluster_column,
+            stratify_by=stratify_by,
+        )
+
+    if stratify_by is not None:
+        raise ValueError(
+            "stratify_by is only supported when using precomputed Butina clusters via cluster_csv_path."
         )
 
     if butina_train_test_split is None:

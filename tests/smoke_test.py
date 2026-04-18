@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -8,13 +9,15 @@ import pytest
 import torch
 import torch.nn as nn
 
+from src.data.sampling import (
+    build_attribute_sampling_weights,
+    build_weighted_random_sampler,
+    compute_attribute_distribution,
+)
 from src.data.splitting import (
     _build_smiles_index_lookup,
     _take_split_indices,
-    build_attribute_sampling_weights,
-    build_weighted_random_sampler,
     butina_split,
-    compute_attribute_distribution,
 )
 from src.models.meta_encoder import (
     CategoricalOneHot,
@@ -41,6 +44,37 @@ def build_batch():
 class LoaderBatch(SimpleNamespace):
     def to(self, device):
         return self
+
+
+def _distribution_gap(dataset, attribute_names, full_dataset):
+    if isinstance(attribute_names, str):
+        attribute_names = (attribute_names,)
+
+    def _key(item):
+        values = []
+        for attribute_name in attribute_names:
+            value = getattr(item, attribute_name)
+            if torch.is_tensor(value):
+                value = value.item()
+            values.append(value)
+        if len(values) == 1:
+            return values[0]
+        return tuple(values)
+
+    overall_counts = Counter(_key(item) for item in full_dataset)
+    split_counts = Counter(_key(item) for item in dataset)
+    split_size = len(dataset)
+    if split_size == 0:
+        return 0.0
+
+    overall_distribution = {
+        label: count / len(full_dataset)
+        for label, count in overall_counts.items()
+    }
+    return sum(
+        abs(split_counts.get(label, 0) / split_size - ratio)
+        for label, ratio in overall_distribution.items()
+    )
 
 
 def test_numerical_encoder_single_column():
@@ -326,6 +360,160 @@ def test_butina_split_can_use_precomputed_cluster_csv():
     assert [item.row_id for item in train_dataset] == [2, 3, 4]
     assert [item.row_id for item in val_dataset] == [0, 1]
     assert [item.row_id for item in test_dataset] == [5]
+
+
+def test_butina_split_with_csv_can_stratify_single_attribute_without_cluster_leakage():
+    features = [
+        SimpleNamespace(
+            smiles=smiles,
+            y=torch.tensor(float(idx)),
+            row_id=idx,
+            species_group=torch.tensor(species_group, dtype=torch.long),
+        )
+        for idx, (smiles, species_group) in enumerate(
+            [
+                ("A1", 0),
+                ("A2", 0),
+                ("B1", 0),
+                ("B2", 0),
+                ("C1", 1),
+                ("C2", 1),
+                ("D1", 1),
+                ("D2", 1),
+            ]
+        )
+    ]
+
+    csv_content = "\n".join(
+        [
+            "SMILES,Cluster",
+            "A1,10",
+            "A2,10",
+            "B1,20",
+            "B2,20",
+            "C1,30",
+            "C2,30",
+            "D1,40",
+            "D2,40",
+        ]
+    )
+
+    with TemporaryDirectory() as tmpdir:
+        csv_path = Path(tmpdir) / "butina_clusters.csv"
+        csv_path.write_text(csv_content)
+
+        baseline_train, baseline_test = butina_split(
+            features,
+            frac_train=0.5,
+            frac_test=0.5,
+            cluster_csv_path=csv_path,
+            cluster_column="Cluster",
+        )
+        stratified_train, stratified_test = butina_split(
+            features,
+            frac_train=0.5,
+            frac_test=0.5,
+            cluster_csv_path=csv_path,
+            cluster_column="Cluster",
+            stratify_by="species_group",
+        )
+
+    baseline_gap = _distribution_gap(baseline_train, "species_group", features)
+    stratified_gap = _distribution_gap(stratified_train, "species_group", features)
+    train_row_ids = {int(item.row_id) for item in stratified_train}
+    test_row_ids = {int(item.row_id) for item in stratified_test}
+
+    assert stratified_gap < baseline_gap
+    for cluster_rows in ({0, 1}, {2, 3}, {4, 5}, {6, 7}):
+        assert cluster_rows <= train_row_ids or cluster_rows <= test_row_ids
+    assert not (train_row_ids & test_row_ids)
+
+
+def test_butina_split_with_csv_can_stratify_joint_attributes():
+    features = [
+        SimpleNamespace(
+            smiles=smiles,
+            y=torch.tensor(float(idx)),
+            row_id=idx,
+            species_group=torch.tensor(species_group, dtype=torch.long),
+            endpoint=torch.tensor(endpoint, dtype=torch.long),
+        )
+        for idx, (smiles, species_group, endpoint) in enumerate(
+            [
+                ("A", 0, 0),
+                ("B", 0, 0),
+                ("C", 0, 1),
+                ("D", 0, 1),
+                ("E", 1, 0),
+                ("F", 1, 0),
+                ("G", 1, 1),
+                ("H", 1, 1),
+            ]
+        )
+    ]
+
+    csv_content = "\n".join(
+        [
+            "SMILES,Cluster",
+            "A,10",
+            "B,20",
+            "C,30",
+            "D,40",
+            "E,50",
+            "F,60",
+            "G,70",
+            "H,80",
+        ]
+    )
+
+    with TemporaryDirectory() as tmpdir:
+        csv_path = Path(tmpdir) / "butina_clusters.csv"
+        csv_path.write_text(csv_content)
+
+        baseline_train, baseline_test = butina_split(
+            features,
+            frac_train=0.5,
+            frac_test=0.5,
+            cluster_csv_path=csv_path,
+            cluster_column="Cluster",
+        )
+        stratified_train, stratified_test = butina_split(
+            features,
+            frac_train=0.5,
+            frac_test=0.5,
+            cluster_csv_path=csv_path,
+            cluster_column="Cluster",
+            stratify_by=["species_group", "endpoint"],
+        )
+
+    baseline_gap = _distribution_gap(
+        baseline_train,
+        ["species_group", "endpoint"],
+        features,
+    )
+    stratified_gap = _distribution_gap(
+        stratified_train,
+        ["species_group", "endpoint"],
+        features,
+    )
+
+    assert stratified_gap < baseline_gap
+    assert not ({int(item.row_id) for item in stratified_train} & {int(item.row_id) for item in stratified_test})
+
+
+def test_butina_split_requires_csv_for_stratification():
+    features = [
+        SimpleNamespace(smiles="A", y=torch.tensor(0.0), row_id=0, species_group=torch.tensor(0)),
+        SimpleNamespace(smiles="B", y=torch.tensor(1.0), row_id=1, species_group=torch.tensor(1)),
+    ]
+
+    with pytest.raises(ValueError, match="cluster_csv_path"):
+        butina_split(
+            features,
+            frac_train=0.5,
+            frac_test=0.5,
+            stratify_by="species_group",
+        )
 
 
 def test_toxicity_model_infers_encoder_dimensions():
