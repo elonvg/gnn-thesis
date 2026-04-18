@@ -14,7 +14,7 @@ from src.data.sampling import (
     build_weighted_random_sampler,
     compute_attribute_distribution,
 )
-from src.data.splitting import (
+from src.data.splitting_codex import (
     _build_smiles_index_lookup,
     _take_split_indices,
     butina_split,
