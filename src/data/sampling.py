@@ -111,7 +111,8 @@ def build_weighted_random_sampler(
     num_samples=None,
     replacement=True,
 ):
-    """Build a WeightedRandomSampler that matches a target attribute distribution in expectation."""
+    # Function for building a WeightedRandomSampler for a dataset based on an attribute distribution
+
     weights = build_attribute_sampling_weights(
         dataset,
         attribute_name=attribute_name,
