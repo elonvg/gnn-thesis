@@ -573,11 +573,11 @@ def test_train_uses_validation_loader_for_early_stopping():
     )
 
     assert trained_model is model
-    assert history["monitor_name"] == "val_loss"
-    assert history["best_epoch"] == 0
-    assert history["stopped_early"] is True
-    assert history["epochs_ran"] == 3
-    assert len(history["val_loss"]) == history["epochs_ran"]
+    assert history["history_all"]["monitor_name"] == "val_loss"
+    assert history["history_all"]["best_epoch"] == 0
+    assert history["history_all"]["stopped_early"] is True
+    assert history["history_all"]["epochs_ran"] == 3
+    assert len(history["history_all"]["val_loss"]) == history["history_all"]["epochs_ran"]
 
 
 def test_train_updates_tqdm_progress_bar():
@@ -688,7 +688,7 @@ def test_train_can_log_metrics_to_a_run():
         run=run,
     )
 
-    assert len(run.logged) == history["epochs_ran"]
+    assert len(run.logged) == history["history_all"]["epochs_ran"]
     assert run.logged[0]["epoch"] == 1
     assert run.logged[0]["train/loss"] == 1.0
     assert run.logged[0]["val/loss"] == 1.0
@@ -700,4 +700,4 @@ def test_train_can_log_metrics_to_a_run():
     assert run.logged[0]["optimizer/lr"] == 0.0
     assert run.summary["best_epoch"] == 0
     assert run.summary["monitor_name"] == "val_loss"
-    assert run.summary["epochs_ran"] == history["epochs_ran"]
+    assert run.summary["epochs_ran"] == history["history_all"]["epochs_ran"]

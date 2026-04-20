@@ -1,6 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+try:
+    import wandb
+except ImportError:  # pragma: no cover - optional dependency
+    wandb = None
+
 
 RESULT_TARGET_COL = "actual_log10c"
 PREDICTION_COL = "pred_log10c"
@@ -87,18 +92,28 @@ def summarize_by_group(results_df, train_df, group_col, min_count=20):
     return summary.sort_values(["n", "mae_gain"], ascending=[False, False]).reset_index(drop=True)
 
 
-def plot_group_mae(summary, title, top_n=10):
+def _log_wandb_figure(run, key, fig):
+    if run is None or wandb is None:
+        return
+
+    run.log({key: wandb.Image(fig)})
+
+
+def plot_group_mae(summary, category, top_n=10, run=None):
+    title = f"{category}: model vs train subgroup mean"
+
     if summary.empty:
         fig, ax = plt.subplots(figsize=(10, 3))
         ax.text(0.5, 0.5, "No groups to plot", ha="center", va="center")
         ax.set_title(title)
         ax.axis("off")
         plt.tight_layout()
+        _log_wandb_figure(run, f"categories/{category}/model_vs_baseline_mae", fig)
         plt.show()
-        return
+        return fig
 
     plot_df = summary.head(top_n).iloc[::-1]
-    labels = [f"{group} (n={n})" for group, n in zip(plot_df["group"], plot_df["n"])]
+    labels = [f"{group} (n_test={n})" for group, n in zip(plot_df["group"], plot_df["n"])]
 
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.barh(labels, plot_df["baseline_mae"], color="#c7ced6", label="Train subgroup mean")
@@ -108,4 +123,6 @@ def plot_group_mae(summary, title, top_n=10):
     ax.grid(axis="x", alpha=0.3)
     ax.legend()
     plt.tight_layout()
+    _log_wandb_figure(run, f"categories/{category}/model_vs_baseline_mae", fig)
     plt.show()
+    return fig
