@@ -90,13 +90,13 @@ def plot_training_metrics(history, metrics=None, prefixes=None, figsize=(15, 4))
     plt.show()
 
 
-def build_label_decoders(label_encoders):
-    if label_encoders is None:
+def build_label_decoders(label_encoder):
+    if label_encoder is None:
         return {}
 
     return {
         category: {encoded: original for original, encoded in encoder.items()}
-        for category, encoder in label_encoders.items()
+        for category, encoder in label_encoder.items()
     }
 
 
@@ -136,8 +136,8 @@ def _group_sample_count(group_history):
     return sum(int(group_history.get(f"{split}_n") or 0) for split in ("train", "val", "test"))
 
 
-def _decode_group_label(category, group_value, label_decoders):
-    label = label_decoders.get(category, {}).get(group_value, group_value)
+def _decode_group_label(category, group_value, label_decoder):
+    label = label_decoder.get(category, {}).get(group_value, group_value)
 
     if label in {-1, None, "<NA>", "nan", "None"}:
         return "Missing"
@@ -189,7 +189,7 @@ def plot_group_training(
     metric="loss",
     top_n=5,
     summary_prefix=None,
-    label_encoders=None,
+    label_encoder=None,
     figsize=None,
     run=None,
 ):
@@ -200,7 +200,7 @@ def plot_group_training(
         for key in history
         if key.startswith("history_") and key != "history_all"
     ]
-    label_decoders = build_label_decoders(label_encoders)
+    label_decoder = build_label_decoders(label_encoder)
     best_epoch = history.get("history_all", {}).get("best_epoch")
 
     rows = []
@@ -247,7 +247,7 @@ def plot_group_training(
             if best_epoch is not None:
                 ax.axvline(best_epoch, color="k", linestyle="--", alpha=0.35)
 
-            display_label = _decode_group_label(category, group_value, label_decoders)
+            display_label = _decode_group_label(category, group_value, label_decoder)
             total_n = _group_sample_count(group_history)
             ax.set_title(f"{display_label} (n={total_n})", fontsize=10)
             ax.grid(alpha=0.3)

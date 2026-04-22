@@ -108,6 +108,14 @@ def evaluate_by_groups(model, loader, loss_fn, device, group_cols):
     avg_loss, rmse, mae = evaluate(model, loader, loss_fn, device)
     return avg_loss, rmse, mae, _group_metrics_from_dataframe(results_df, group_cols, loss_fn)
 
+def build_label_decoders(label_encoder):
+    if label_encoder is None:
+        return {}
+
+    return {
+        category: {encoded: original for original, encoded in encoder.items()}
+        for category, encoder in label_encoder.items()
+    }
 
 def _init_history(record_categories=None, include_val=False, include_test=False):
 
@@ -223,28 +231,42 @@ def _current_lr(optimizer):
     return optimizer.param_groups[0].get("lr")
 
 
-def _build_run_log(epoch, train_loss, val_metrics=None, test_metrics=None, optimizer=None):
+def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=None, record_categories=None, label_decoder=None, optimizer=None):
     metrics = {
         "epoch": epoch + 1,
-        "train/loss": train_loss,
+        "train/loss": history["history_all"]["train_loss"][-1],
     }
 
     if val_metrics is not None:
         metrics.update(
             {
-                "val/loss": val_metrics[0],
-                "val/rmse": val_metrics[1],
-                "val/mae": val_metrics[2],
+                "val/loss": history["history_all"]["val_loss"][-1] if "val_loss" in history["history_all"] else None,
+                "val/rmse": history["history_all"]["val_rmse"][-1] if "val_rmse" in history["history_all"] else None,
+                "val/mae": history["history_all"]["val_mae"][-1] if "val_mae" in history["history_all"] else None,
             }
         )
 
     if test_metrics is not None:
         metrics.update(
             {
-                "test/loss": test_metrics[0],
-                "test/rmse": test_metrics[1],
-                "test/mae": test_metrics[2],
+                "test/loss": history["history_all"]["test_loss"][-1] if "test_loss" in history["history_all"] else None,
+                "test/rmse": history["history_all"]["test_rmse"][-1] if "test_rmse" in history["history_all"] else None,
+                "test/mae": history["history_all"]["test_mae"][-1] if "test_mae" in history["history_all"] else None,
             }
+        )
+    
+    if record_categories is not None:
+        for category in record_categories:
+            for group_value in history[f"history_{category}"].get(f"history_{category}_group", {}):
+                label = str(label_decoder.get(category, {}).get(group_value, group_value))
+                
+                metrics.update(
+                    {
+                        f"categories/{category}/{label}/train_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["train_loss"][-1],
+                        f"categories/{category}/{label}/test_rmse": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_rmse"][-1],
+                        f"categories/{category}/{label}/test_mae": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_mae"][-1],
+                    }
+            
         )
 
     lr = _current_lr(optimizer)
@@ -319,6 +341,7 @@ def train(
     early_stopping_min_delta=0.0,
     verbose_every=10,
     record_categories=None,
+    label_encoder=None,
     run=None,
 ):
     model = model.to(device)
@@ -338,6 +361,7 @@ def train(
     history = _init_history(record_categories=record_categories, include_val=val_loader is not None, include_test=test_loader is not None)
     for category in history:
         history[category]["monitor_name"] = monitor_name
+    label_decoder = build_label_decoders(label_encoder) if label_encoder is not None else None
 
     best_monitor_value = float("inf")
     best_model_state = copy.deepcopy(model.state_dict())
@@ -440,9 +464,12 @@ def train(
                 run.log(
                     _build_run_log(
                         epoch,
+                        history,
                         train_loss,
                         val_metrics=val_metrics,
                         test_metrics=test_metrics,
+                        record_categories=record_categories,
+                        label_decoder=label_decoder,
                         optimizer=optimizer,
                     )
                 )
