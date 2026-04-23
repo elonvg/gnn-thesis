@@ -1,11 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-try:
-    import wandb
-except ImportError:  # pragma: no cover - optional dependency
-    wandb = None
-
 
 RESULT_TARGET_COL = "actual_log10c"
 PREDICTION_COL = "pred_log10c"
@@ -92,14 +87,7 @@ def summarize_by_group(results_df, train_df, group_col, min_count=20):
     return summary.sort_values(["n", "mae_gain"], ascending=[False, False]).reset_index(drop=True)
 
 
-def _log_wandb_figure(run, key, fig):
-    if run is None or wandb is None:
-        return
-
-    run.log({key: wandb.Image(fig)})
-
-
-def plot_group_mae(summary, category, top_n=10, run=None):
+def plot_group_mae(summary, category, top_n=10):
     title = f"{category}: model vs train subgroup mean"
 
     if summary.empty:
@@ -108,7 +96,6 @@ def plot_group_mae(summary, category, top_n=10, run=None):
         ax.set_title(title)
         ax.axis("off")
         plt.tight_layout()
-        _log_wandb_figure(run, f"categories/{category}/model_vs_baseline_mae", fig)
         plt.show()
         return fig
 
@@ -123,6 +110,5 @@ def plot_group_mae(summary, category, top_n=10, run=None):
     ax.grid(axis="x", alpha=0.3)
     ax.legend()
     plt.tight_layout()
-    _log_wandb_figure(run, f"categories/{category}/model_vs_baseline_mae", fig)
     plt.show()
     return fig

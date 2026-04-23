@@ -262,9 +262,9 @@ def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=No
                 
                 metrics.update(
                     {
-                        f"categories/{category}/{label}/train_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["train_loss"][-1],
-                        f"categories/{category}/{label}/test_rmse": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_rmse"][-1],
-                        f"categories/{category}/{label}/test_mae": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_mae"][-1],
+                        f"cat_{category}/{label}/train_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["train_loss"][-1],
+                        f"cat_{category}/{label}/test_rmse": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_rmse"][-1],
+                        f"cat_{category}__{label}/test_mae": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_mae"][-1],
                     }
             
         )

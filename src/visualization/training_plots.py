@@ -1,11 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-try:
-    import wandb
-except ImportError:  # pragma: no cover - optional dependency
-    wandb = None
-
 
 def plot_toxicity_distribution(train_dataset, test_dataset, val_dataset=None):
     train_y = [g.y.item() for g in train_dataset]
@@ -176,13 +171,6 @@ def _group_summary_text(group_history, summary_split):
     return "\n".join(lines)
 
 
-def _log_wandb_figure(run, key, fig):
-    if run is None or wandb is None:
-        return
-
-    run.log({key: wandb.Image(fig)})
-
-
 def plot_group_training(
     history,
     record_categories=None,
@@ -191,7 +179,6 @@ def plot_group_training(
     summary_prefix=None,
     label_encoder=None,
     figsize=None,
-    run=None,
 ):
     if metric not in {"loss", "rmse", "mae"}:
         raise ValueError("metric must be one of: 'loss', 'rmse', 'mae'.")
@@ -285,11 +272,5 @@ def plot_group_training(
     else:
         fig.tight_layout()
 
-    if len(categories) == 1:
-        log_key = f"categories/{categories[0]}/training_{metric}"
-    else:
-        log_key = f"categories/grouped_training_{metric}"
-
-    _log_wandb_figure(run, log_key, fig)
     plt.show()
     return fig
