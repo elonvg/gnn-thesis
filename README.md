@@ -1,3 +1,1 @@
-# gnn-thesis
-# ok
-hej
+# GNN Thesis Project
