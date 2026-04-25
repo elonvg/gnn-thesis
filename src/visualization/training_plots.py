@@ -244,8 +244,6 @@ def plot_group_training(
             if row_index == len(rows) - 1:
                 ax.set_xlabel("Epoch")
 
-            summary_split = _choose_summary_split(group_history, preferred=summary_prefix)
-
     if y_values:
         y_min = min(y_values)
         y_max = max(y_values)
