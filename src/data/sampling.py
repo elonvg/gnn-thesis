@@ -1,6 +1,8 @@
 from collections import Counter, defaultdict, deque
 from functools import lru_cache
 from copy import deepcopy
+from torch.utils.data import WeightedRandomSampler
+from torch_geometric.loader import DataLoader
 
 import numpy as np
 import pandas as pd
@@ -49,7 +51,7 @@ def collect_attribute_values(dataset, attribute_name):
 
 def compute_attribute_distribution(dataset, attribute_name):
     # Function for computing distribution of an attribute in the dataset
-    # Returns a dict mapping attribute values to their relative frequencies.
+    # Returns a dict mapping attribute values to number of occurances
     
     # Collect attribute values
     values = collect_attribute_values(dataset, attribute_name)
@@ -59,10 +61,10 @@ def compute_attribute_distribution(dataset, attribute_name):
     # Compute value counts and total
     counts = Counter(values)
     total = float(len(values))
-    return {label: count / total for label, count in counts.items()}
+    return {label: count for label, count in counts.items()}
 
 
-def build_attribute_sampling_weights(dataset, attribute_name, target_distribution=None):
+def build_attribute_weights(dataset, attribute_name, target_distribution=None):
     # Function for building sampling weights for dataset
 
     values = collect_attribute_values(dataset, attribute_name)
@@ -103,6 +105,12 @@ def build_attribute_sampling_weights(dataset, attribute_name, target_distributio
         dtype=torch.double,
     )
 
+def simple_weights(dataset, attribute_distribution):
+    weights = []
+    total = len(dataset)
+
+    for item, n in attribute_distribution:
+        weights.append(n/total)
 
 def build_weighted_random_sampler(
     dataset,
@@ -113,7 +121,7 @@ def build_weighted_random_sampler(
 ):
     # Function for building a WeightedRandomSampler for a dataset based on an attribute distribution
 
-    weights = build_attribute_sampling_weights(
+    weights = build_attribute_weights(
         dataset,
         attribute_name=attribute_name,
         target_distribution=target_distribution,
@@ -126,3 +134,28 @@ def build_weighted_random_sampler(
         num_samples=num_samples,
         replacement=replacement,
     )
+
+def LoadData(dataset, batch_size, shuffle, weighted_random_sampler, attribute):
+
+    # Compute number of samples for each group
+    attr_dist = compute_attribute_distribution(dataset, attribute)
+
+    # Compute weights : 1/count
+    weights = simple_weights(dataset, attr_dist)
+    # Create sampler
+
+    sampler = WeightedRandomSampler(
+        weights=weights,
+        num_samples=None,
+        replacement=True
+        )
+
+    # Create dataloader
+    loader = DataLoader(
+    dataset,
+    batch_size=batch_size,
+    shuffle=shuffle,
+    sampler=sampler
+    )
+
+    return loader
