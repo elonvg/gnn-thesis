@@ -1,24 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-def plot_toxicity_distribution(train_dataset, test_dataset, val_dataset=None):
-    train_y = [g.y.item() for g in train_dataset]
-    test_y = [g.y.item() for g in test_dataset]
-    val_y = [g.y.item() for g in val_dataset] if val_dataset is not None else None
-
-    plt.figure(figsize=(8, 4))
-    plt.hist(train_y, bins=50, alpha=0.5, label="Train", density=True)
-    if val_y is not None:
-        plt.hist(val_y, bins=50, alpha=0.5, label="Val", density=True)
-    plt.hist(test_y, bins=50, alpha=0.5, label="Test", density=True)
-    plt.xlabel("log10c")
-    plt.legend()
-    title = "Target distribution: train vs val vs test" if val_y is not None else "Target distribution: train vs test"
-    plt.title(title)
-    plt.show()
-
-
 def plot_training(history, figsize=(10, 6)):
     plt.figure(figsize=figsize)
     plt.plot(history["train_loss"], label="Train Loss")

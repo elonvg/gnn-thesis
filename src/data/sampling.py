@@ -46,7 +46,7 @@ def collect_attribute_values(dataset, attribute_name):
 
     return values
 
-def compute_attribute_distribution(dataset, attribute_name, values):
+def compute_attribute_distribution(values):
     # Function for computing distribution of an attribute in the dataset
     # Returns a dict mapping attribute values to number of occurances
     
@@ -97,7 +97,7 @@ def LoadData(dataset, batch_size, shuffle=False, attribute="species_group", targ
     values = collect_attribute_values(dataset, attribute)
 
     # Compute number of samples for each group
-    target_attr_dist = compute_attribute_distribution(target_dataset, attribute, values)
+    target_attr_dist = compute_attribute_distribution(values)
 
     # Compute weights : 1/count
     weights = simple_weights(target_attr_dist, values)
@@ -120,3 +120,37 @@ def LoadData(dataset, batch_size, shuffle=False, attribute="species_group", targ
     )
 
     return loader
+
+def display_dataloader_distribution(dataloader, attribute):
+    from collections import Counter
+    import matplotlib.pyplot as plt
+
+    counts = Counter()
+    for batch in dataloader:
+        values = batch[attribute]
+        # handle tensors or plain lists
+        if hasattr(values, "tolist"):
+            values = values.tolist()
+        counts.update(values)
+
+    total = sum(counts.values())
+    labels = sorted(counts.keys())
+    frequencies = [counts[l] / total for l in labels]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar([str(l) for l in labels], frequencies)
+    ax.set_xlabel(attribute)
+    ax.set_ylabel("Fracrion")
+    ax.set_title(f"Distribution of {attribute}")
+    ax.bar_label(bars, fmt="%.3f", padding=3)
+    plt.tight_layout()
+    plt.show()
+
+
+def show_loader_info(attribute, train_loader, val_loader, test_loader, categorical_decoder):
+
+    print(f"Train batches: {len(train_loader)}")
+    print(f"Val batches: {len(val_loader)}")
+    print(f"Test batches: {len(test_loader)}")
+
+    display_dataloader_distribution(train_loader, attribute)

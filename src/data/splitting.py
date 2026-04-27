@@ -5,6 +5,7 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 import torch
+import matplotlib.pyplot as plt
 
 try:
     from skfp.model_selection import butina_train_test_split
@@ -406,3 +407,45 @@ def butina_split(
         cluster_csv_path=cluster_csv_path,
         cluster_col=cluster_col,
     )
+
+
+def show_split_info(train_dataset, val_dataset, test_dataset):
+
+    train_targets = np.array([g.y.item() for g in train_dataset])
+    val_targets = np.array([g.y.item() for g in val_dataset])
+    test_targets = np.array([g.y.item() for g in test_dataset])
+    train_smiles = [g.smiles for g in train_dataset]
+    val_smiles = [g.smiles for g in val_dataset]
+    test_smiles = [g.smiles for g in test_dataset]
+
+    total_len = len(train_dataset) + len(val_dataset) + len(test_dataset)
+
+    print(f"Train size: {len(train_dataset):,} ({len(train_dataset) / total_len:.1%})")
+    print(f"Val size:   {len(val_dataset):,} ({len(val_dataset) / total_len:.1%})")
+    print(f"Test size:  {len(test_dataset):,} ({len(test_dataset) / total_len:.1%})")
+    print()
+    print(f"Unique molecules in train: {len(set(train_smiles)):,}")
+    print(f"Unique molecules in val:   {len(set(val_smiles)):,}")
+    print(f"Unique molecules in test:  {len(set(test_smiles)):,}")
+    print(f"Val molecules not in train:  {len(set(val_smiles) - set(train_smiles)):,}")
+    print(f"Test molecules not in train: {len(set(test_smiles) - set(train_smiles)):,}")
+    print()
+    print("Target distribution")
+    print(f"Train mean/std: {train_targets.mean():.4f} / {train_targets.std():.4f}")
+    print(f"Val mean/std:   {val_targets.mean():.4f} / {val_targets.std():.4f}")
+    print(f"Test mean/std:  {test_targets.mean():.4f} / {test_targets.std():.4f}")
+
+    train_y = [g.y.item() for g in train_dataset]
+    test_y = [g.y.item() for g in test_dataset]
+    val_y = [g.y.item() for g in val_dataset] if val_dataset is not None else None
+
+    plt.figure(figsize=(8, 4))
+    plt.hist(train_y, bins=50, alpha=0.5, label="Train", density=True)
+    if val_y is not None:
+        plt.hist(val_y, bins=50, alpha=0.5, label="Val", density=True)
+    plt.hist(test_y, bins=50, alpha=0.5, label="Test", density=True)
+    plt.xlabel("log10c")
+    plt.legend()
+    title = "Target distribution: train vs val vs test" if val_y is not None else "Target distribution: train vs test"
+    plt.title(title)
+    plt.show()

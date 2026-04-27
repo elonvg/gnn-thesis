@@ -3,20 +3,11 @@ from typing import Callable, Iterable, Sequence
 import numpy as np
 import torch
 
-try:
-    import deepchem as dc
-except ImportError:
-    dc = None
+from rdkit import Chem
+from torch_geometric.data import Data
 
-try:
-    from rdkit import Chem
-except ImportError:
-    Chem = None
+from rdkit import RDLogger
 
-try:
-    from torch_geometric.data import Data
-except ImportError:
-    Data = None
 
 
 def simple_featurizer(
@@ -24,6 +15,8 @@ def simple_featurizer(
     atom_features: list[str] = ("atomic_num_scaled", "degree", "formal_charge", "num_hs", "is_aromatic", "is_in_ring", "mass_scaled"),
     bond_features: list[str] = ("bond_order", "is_conjugated", "is_in_ring"),
     ):
+
+    RDLogger.DisableLog("rdApp.*")
 
     ATOM_FEATURES = {
         "atomic_num":        lambda a: float(a.GetAtomicNum()),
