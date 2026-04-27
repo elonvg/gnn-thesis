@@ -1,0 +1,11 @@
+species_latin_name,species_group,endpoint,effect,actual_log10c,pred_log10c,abs_error_log10c,fold_error,smiles
+raphidocelis subcapitata,algae,EC50,POP,-14.330683,-0.39747664,13.933207,85744470000000.0,[Hg]
+raphidocelis subcapitata,algae,EC50,POP,-14.330683,-0.39747664,13.933207,85744470000000.0,[Hg]
+bipolaris sorokiniana,fungi,NOEC,POP,-6.481615,0.9732679,7.454883,28502500.0,COC(=O)c1c(Cl)c(Cl)c(C(=O)OC)c(Cl)c1Cl
+paramecium putrinum,protozoans,EC50,MOR,-5.8860564,1.2186275,7.104684,12725765.0,Cl[Ni]Cl
+anodonta cygnea,mollusks,EC50,PHY,-7.124939,-0.08351283,7.041426,11000847.0,CCOC(=O)CC(SP(=S)(OC)OC)C(=O)OCC
+brassica rapa var. rapa,plants,EC10,GRO,-6.2839966,0.65097713,6.9349737,8609417.0,CCCCOC(=O)c1ccccc1C(=O)OCCCC
+trifolium repens,plants,EC10,GRO,-6.4089355,0.2718742,6.68081,4795233.5,CCCCOC(=O)c1ccccc1C(=O)OCCCC
+parvocalanus crassirostris,crustaceans,LOEC,POP,-6.958607,-0.37205103,6.586556,3859723.2,CCCCC(CC)COC(=O)c1ccccc1C(=O)OCC(CC)CCCC
+apium nodiflorum,plants,EC50,GRO,-6.5850267,-0.58624035,5.9987864,997209.4,CN(C)C(=O)Nc1ccc(Cl)c(Cl)c1
+apium nodiflorum,plants,EC50,GRO,-6.5850267,-0.58624035,5.9987864,997209.4,CN(C)C(=O)Nc1ccc(Cl)c(Cl)c1

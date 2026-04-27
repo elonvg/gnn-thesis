@@ -1,6 +1,4 @@
-from collections import Counter, defaultdict, deque
-from functools import lru_cache
-from copy import deepcopy
+from collections import Counter
 from torch.utils.data import WeightedRandomSampler
 from torch_geometric.loader import DataLoader
 import torch
@@ -46,9 +44,11 @@ def collect_attribute_values(dataset, attribute_name):
 
     return values
 
-def compute_attribute_distribution(values):
+def compute_attribute_distribution(values, attribute_name=None):
     # Function for computing distribution of an attribute in the dataset
     # Returns a dict mapping attribute values to number of occurances
+    if attribute_name is not None:
+        values = collect_attribute_values(values, attribute_name)
     
     if not values:
         return {}
@@ -58,12 +58,7 @@ def compute_attribute_distribution(values):
     total = float(len(values))
     return {label: count/total for label, count in counts.items()}
 
-def simple_weights(target_distribution, values):
-    weights = []
-
-    for n in target_distribution.values():
-        weights.append(n)
-    
+def compute_weights(target_distribution, values):
     # Count frequency of each value
     counts = Counter(values)
 
@@ -76,8 +71,13 @@ def simple_weights(target_distribution, values):
         normalized_target[normalized_value] = normalized_weight
     target_distribution = normalized_target
     
-    # Normalze value values
+    # Normalize target values over labels present in this dataset.
     target_mass = sum(target_distribution.get(value, 0.0) for value in counts)
+    if target_mass <= 0:
+        raise ValueError(
+            "Target distribution does not contain any labels present in the dataset."
+        )
+
     normalized_target = {
         value: target_distribution.get(value, 0.0) / target_mass for value in counts
     }
@@ -89,68 +89,160 @@ def simple_weights(target_distribution, values):
 
     return weights
 
+
 def LoadData(dataset, batch_size, shuffle=False, attribute="species_group", target_dataset=None):
-    if target_dataset == None:
+    if target_dataset is None:
         target_dataset = dataset
     
+    # Compute target distribution from target dataset
+    target_values = collect_attribute_values(target_dataset, attribute)
+
+    target_attr_dist = compute_attribute_distribution(target_values)
+
     # Collect values (list of specified attribute for each point in dataset)
     values = collect_attribute_values(dataset, attribute)
 
-    # Compute number of samples for each group
-    target_attr_dist = compute_attribute_distribution(values)
-
-    # Compute weights : 1/count
-    weights = simple_weights(target_attr_dist, values)
+    # Compute weights : target/count
+    weights = compute_weights(target_attr_dist, values)
 
     # Create sampler
     num_samples = len(dataset)
     sampler = WeightedRandomSampler(
         weights=weights,
         num_samples=num_samples,
-        replacement=True
-        )
-    
+        replacement=True,
+    )
 
     # Create dataloader
     loader = DataLoader(
-    dataset,
-    batch_size=batch_size,
-    shuffle=shuffle,
-    sampler=sampler
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        sampler=sampler,
     )
 
     return loader
 
-def display_dataloader_distribution(dataloader, attribute):
-    from collections import Counter
+
+def _loader_attribute_counts(dataloader, attribute):
+    counts = Counter()
+
+    for batch in dataloader:
+        try:
+            values = batch[attribute]
+        except (KeyError, TypeError):
+            values = getattr(batch, attribute)
+
+        if torch.is_tensor(values):
+            values = values.detach().cpu().tolist()
+        elif hasattr(values, "tolist"):
+            values = values.tolist()
+
+        if not isinstance(values, (list, tuple)):
+            values = [values]
+
+        counts.update(_normalize_attribute_value(value) for value in values)
+
+    return counts
+
+
+def _normalize_dataloaders_for_plot(dataloaders):
+    if isinstance(dataloaders, dict):
+        return list(dataloaders.items())
+
+    if isinstance(dataloaders, (list, tuple)):
+        if dataloaders and isinstance(dataloaders[0], tuple) and len(dataloaders[0]) == 2:
+            return list(dataloaders)
+
+        default_names = ("Train", "Val", "Test")
+        return [
+            (default_names[index] if index < len(default_names) else f"Loader {index + 1}", dataloader)
+            for index, dataloader in enumerate(dataloaders)
+        ]
+
+    return [("Loader", dataloaders)]
+
+
+def _decode_attribute_label(value, categorical_decoder=None):
+    if categorical_decoder is None:
+        return str(value)
+
+    if isinstance(categorical_decoder, dict):
+        value = categorical_decoder.get(value, value)
+
+    if value in {-1, None, "<NA>", "nan", "None"}:
+        return "Missing"
+
+    try:
+        if np.isnan(value):
+            return "Missing"
+    except TypeError:
+        pass
+
+    return str(value)
+
+
+def display_dataloader_distribution(dataloaders, attribute, categorical_decoder=None, figsize=None):
     import matplotlib.pyplot as plt
 
-    counts = Counter()
-    for batch in dataloader:
-        values = batch[attribute]
-        # handle tensors or plain lists
-        if hasattr(values, "tolist"):
-            values = values.tolist()
-        counts.update(values)
+    named_loaders = _normalize_dataloaders_for_plot(dataloaders)
+    counts_by_loader = [
+        (loader_name, _loader_attribute_counts(dataloader, attribute))
+        for loader_name, dataloader in named_loaders
+    ]
 
-    total = sum(counts.values())
-    labels = sorted(counts.keys())
-    frequencies = [counts[l] / total for l in labels]
+    labels = sorted(
+        {label for _, counts in counts_by_loader for label in counts},
+        key=lambda value: str(value),
+    )
+    if not labels:
+        raise ValueError("No attribute values were found in the dataloader(s).")
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar([str(l) for l in labels], frequencies)
+    if figsize is None:
+        figsize = (max(8, 0.65 * len(labels) + 3), 5)
+
+    x = np.arange(len(labels))
+    width = min(0.8 / len(counts_by_loader), 0.25)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    for index, (loader_name, counts) in enumerate(counts_by_loader):
+        total = sum(counts.values())
+        frequencies = [counts[label] / total if total else 0.0 for label in labels]
+        offset = (index - (len(counts_by_loader) - 1) / 2) * width
+        bars = ax.bar(x + offset, frequencies, width=width, label=loader_name)
+        ax.bar_label(bars, fmt="%.2f", padding=2, fontsize=8)
+
+    tick_labels = [
+        _decode_attribute_label(label, categorical_decoder)
+        for label in labels
+    ]
+    ax.set_xticks(x)
+    ax.set_xticklabels(tick_labels, rotation=35, ha="right")
     ax.set_xlabel(attribute)
-    ax.set_ylabel("Fracrion")
-    ax.set_title(f"Distribution of {attribute}")
-    ax.bar_label(bars, fmt="%.3f", padding=3)
-    plt.tight_layout()
+    ax.set_ylabel("Fraction")
+    ax.set_title(f"{attribute} distribution by dataloader")
+    ax.set_ylim(0, 1)
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
     plt.show()
 
 
 def show_loader_info(attribute, train_loader, val_loader, test_loader, categorical_decoder):
+    loaders = {
+        "Train": train_loader,
+        "Val": val_loader,
+        "Test": test_loader,
+    }
 
-    print(f"Train batches: {len(train_loader)}")
-    print(f"Val batches: {len(val_loader)}")
-    print(f"Test batches: {len(test_loader)}")
+    for loader_name, loader in loaders.items():
+        dataset_size = len(loader.dataset) if hasattr(loader, "dataset") else "unknown"
+        sampled_size = getattr(getattr(loader, "sampler", None), "num_samples", dataset_size)
+        batch_size = getattr(loader, "batch_size", "unknown")
+        print(
+            f"{loader_name}: {dataset_size} dataset samples, "
+            f"{sampled_size} sampled samples, {len(loader)} batches "
+            f"(batch_size={batch_size})"
+        )
 
-    display_dataloader_distribution(train_loader, attribute)
+    display_dataloader_distribution(loaders, attribute, categorical_decoder=categorical_decoder)
