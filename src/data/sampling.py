@@ -3,10 +3,9 @@ from functools import lru_cache
 from copy import deepcopy
 from torch.utils.data import WeightedRandomSampler
 from torch_geometric.loader import DataLoader
-
+import torch
 import numpy as np
 import pandas as pd
-import torch
 
 def _normalize_attribute_value(value):
     # Function for normalizing attribute values
@@ -31,7 +30,6 @@ def _normalize_attribute_value(value):
 
     return value
 
-
 def collect_attribute_values(dataset, attribute_name):
     # Function for collecting values of an attribute over a dataset
 
@@ -48,108 +46,70 @@ def collect_attribute_values(dataset, attribute_name):
 
     return values
 
-
-def compute_attribute_distribution(dataset, attribute_name):
+def compute_attribute_distribution(dataset, attribute_name, values):
     # Function for computing distribution of an attribute in the dataset
     # Returns a dict mapping attribute values to number of occurances
     
-    # Collect attribute values
-    values = collect_attribute_values(dataset, attribute_name)
     if not values:
         return {}
 
     # Compute value counts and total
     counts = Counter(values)
     total = float(len(values))
-    return {label: count for label, count in counts.items()}
+    return {label: count/total for label, count in counts.items()}
 
+def simple_weights(target_distribution, values):
+    weights = []
 
-def build_attribute_weights(dataset, attribute_name, target_distribution=None):
-    # Function for building sampling weights for dataset
-
-    values = collect_attribute_values(dataset, attribute_name)
-    if not values:
-        raise ValueError("Weighted sampling requires a non-empty dataset.")
-
+    for n in target_distribution.values():
+        weights.append(n)
+    
+    # Count frequency of each value
     counts = Counter(values)
 
-    if target_distribution is None:
-        target_distribution = {
-            label: count / len(values)
-            for label, count in counts.items()
-        }
-    else:
-        normalized_target = {}
-        for label, weight in target_distribution.items():
-            normalized_label = _normalize_attribute_value(label)
-            normalized_weight = float(weight)
-            if normalized_weight < 0:
-                raise ValueError("target_distribution weights must be non-negative.")
-            normalized_target[normalized_label] = normalized_weight
-        target_distribution = normalized_target
+    # Normalize values
+    normalized_target = {}
+    for value, weight in target_distribution.items():
+        normalized_value = _normalize_attribute_value(value)
+        normalized_weight = float(weight)
 
-    present_target_mass = sum(target_distribution.get(label, 0.0) for label in counts)
-    if present_target_mass <= 0:
-        raise ValueError(
-            f"target_distribution does not assign any positive mass to labels present in "
-            f"attribute {attribute_name!r}."
-        )
-
+        normalized_target[normalized_value] = normalized_weight
+    target_distribution = normalized_target
+    
+    # Normalze value values
+    target_mass = sum(target_distribution.get(value, 0.0) for value in counts)
     normalized_target = {
-        label: target_distribution.get(label, 0.0) / present_target_mass
-        for label in counts
+        value: target_distribution.get(value, 0.0) / target_mass for value in counts
     }
 
-    return torch.tensor(
-        [normalized_target[label] / counts[label] for label in values],
-        dtype=torch.double,
+    # weight = target / total
+    weights = torch.tensor(
+        [normalized_target[value] / counts[value] for value in values], dtype=torch.double
     )
 
-def simple_weights(dataset, attribute_distribution):
-    weights = []
-    total = len(dataset)
+    return weights
 
-    for n in attribute_distribution.values():
-        weights.append(n/total)
-
-def build_weighted_random_sampler(
-    dataset,
-    attribute_name,
-    target_distribution=None,
-    num_samples=None,
-    replacement=True,
-):
-    # Function for building a WeightedRandomSampler for a dataset based on an attribute distribution
-
-    weights = build_attribute_weights(
-        dataset,
-        attribute_name=attribute_name,
-        target_distribution=target_distribution,
-    )
-    if num_samples is None:
-        num_samples = len(weights)
-
-    return torch.utils.data.WeightedRandomSampler(
-        weights=weights,
-        num_samples=num_samples,
-        replacement=replacement,
-    )
-
-def LoadData(dataset, batch_size, shuffle, weighted_random_sampler, attribute):
+def LoadData(dataset, batch_size, shuffle=False, attribute="species_group", target_dataset=None):
+    if target_dataset == None:
+        target_dataset = dataset
+    
+    # Collect values (list of specified attribute for each point in dataset)
+    values = collect_attribute_values(dataset, attribute)
 
     # Compute number of samples for each group
-    attr_dist = compute_attribute_distribution(dataset, attribute)
+    target_attr_dist = compute_attribute_distribution(target_dataset, attribute, values)
 
     # Compute weights : 1/count
-    weights = simple_weights(dataset, attr_dist)
+    weights = simple_weights(target_attr_dist, values)
 
     # Create sampler
-    num_samples = len(weights)
+    num_samples = len(dataset)
     sampler = WeightedRandomSampler(
         weights=weights,
         num_samples=num_samples,
         replacement=True
         )
+    
 
     # Create dataloader
     loader = DataLoader(
