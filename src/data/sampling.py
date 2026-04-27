@@ -109,7 +109,7 @@ def simple_weights(dataset, attribute_distribution):
     weights = []
     total = len(dataset)
 
-    for item, n in attribute_distribution:
+    for n in attribute_distribution.values():
         weights.append(n/total)
 
 def build_weighted_random_sampler(
@@ -142,11 +142,12 @@ def LoadData(dataset, batch_size, shuffle, weighted_random_sampler, attribute):
 
     # Compute weights : 1/count
     weights = simple_weights(dataset, attr_dist)
-    # Create sampler
 
+    # Create sampler
+    num_samples = len(weights)
     sampler = WeightedRandomSampler(
         weights=weights,
-        num_samples=None,
+        num_samples=num_samples,
         replacement=True
         )
 
