@@ -83,8 +83,12 @@ def compute_weights(target_distribution, values):
     }
 
     # weight = target / total
+    # weights = torch.tensor(
+    #     [normalized_target[value] / counts[value] for value in values], dtype=torch.double
+    # )
+
     weights = torch.tensor(
-        [normalized_target[value] / counts[value] for value in values], dtype=torch.double
+        [1 / counts[value] for value in values], dtype=torch.double
     )
 
     return weights
@@ -163,12 +167,12 @@ def _normalize_dataloaders_for_plot(dataloaders):
     return [("Loader", dataloaders)]
 
 
-def _decode_attribute_label(value, categorical_decoder=None):
-    if categorical_decoder is None:
+def _decode_attribute_label(value, species_group_decoder=None):
+    if species_group_decoder is None:
         return str(value)
 
-    if isinstance(categorical_decoder, dict):
-        value = categorical_decoder.get(value, value)
+    if isinstance(species_group_decoder, dict):
+        value = species_group_decoder.get(value, value)
 
     if value in {-1, None, "<NA>", "nan", "None"}:
         return "Missing"
@@ -182,7 +186,7 @@ def _decode_attribute_label(value, categorical_decoder=None):
     return str(value)
 
 
-def display_dataloader_distribution(dataloaders, attribute, categorical_decoder=None, figsize=None):
+def display_dataloader_distribution(dataloaders, attribute, species_group_decoder=None, figsize=None):
     import matplotlib.pyplot as plt
 
     named_loaders = _normalize_dataloaders_for_plot(dataloaders)
@@ -213,7 +217,7 @@ def display_dataloader_distribution(dataloaders, attribute, categorical_decoder=
         ax.bar_label(bars, fmt="%.2f", padding=2, fontsize=8)
 
     tick_labels = [
-        _decode_attribute_label(label, categorical_decoder)
+        _decode_attribute_label(label, species_group_decoder)
         for label in labels
     ]
     ax.set_xticks(x)
@@ -228,7 +232,7 @@ def display_dataloader_distribution(dataloaders, attribute, categorical_decoder=
     plt.show()
 
 
-def show_loader_info(attribute, train_loader, val_loader, test_loader, categorical_decoder):
+def show_loader_info(attribute, train_loader, val_loader, test_loader, species_group_decoder):
     loaders = {
         "Train": train_loader,
         "Val": val_loader,
@@ -245,4 +249,63 @@ def show_loader_info(attribute, train_loader, val_loader, test_loader, categoric
             f"(batch_size={batch_size})"
         )
 
-    display_dataloader_distribution(loaders, attribute, categorical_decoder=categorical_decoder)
+    display_dataloader_distribution(loaders, attribute, species_group_decoder=species_group_decoder)
+
+def display_sampling_effect(
+    dataset,
+    loader,
+    attribute,
+    categorical_decoder=None,
+    figsize=None,
+):
+    """
+    Side-by-side: raw dataset distribution vs what the
+    weighted sampler actually draws across all batches.
+    Optionally adds a third panel showing the per-sample weights.
+    """
+    import matplotlib.pyplot as plt
+
+    # --- raw dataset distribution ---
+    raw_values = collect_attribute_values(dataset, attribute)
+    raw_dist = compute_attribute_distribution(raw_values)
+
+    # --- sampled distribution (iterate loader) ---
+    sampled_counts = _loader_attribute_counts(loader, attribute)
+    sampled_total = sum(sampled_counts.values())
+    sampled_dist = {
+        k: v / sampled_total for k, v in sampled_counts.items()
+    }
+
+    # --- align labels ---
+    labels = sorted(set(raw_dist) | set(sampled_dist), key=str)
+    tick_labels = [
+        _decode_attribute_label(l, categorical_decoder) for l in labels
+    ]
+
+    x = np.arange(len(labels))
+    w = 0.35
+
+    if figsize is None:
+        figsize = (max(8, 0.7 * len(labels) + 3), 5)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    raw_vals  = [raw_dist.get(l, 0.0) for l in labels]
+    samp_vals = [sampled_dist.get(l, 0.0) for l in labels]
+
+    bars_raw  = ax.bar(x - w/2, raw_vals,  w, label="Dataset (raw)",   color="#85B7EB")
+    bars_samp = ax.bar(x + w/2, samp_vals, w, label="Sampled (loader)", color="#5DCAA5")
+
+    ax.bar_label(bars_raw,  fmt="%.2f", padding=2, fontsize=8)
+    ax.bar_label(bars_samp, fmt="%.2f", padding=2, fontsize=8)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(tick_labels, rotation=35, ha="right")
+    ax.set_xlabel(attribute)
+    ax.set_ylabel("Fraction")
+    ax.set_title(f"Effect of weighted sampling on {attribute} distribution")
+    ax.set_ylim(0, 1)
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+    plt.show()
