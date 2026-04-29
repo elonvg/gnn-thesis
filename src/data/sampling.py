@@ -88,7 +88,7 @@ def compute_weights(target_distribution, values):
     # )
 
     weights = torch.tensor(
-        [1 / counts[value] for value in values], dtype=torch.double
+        [1 / np.sqrt(counts[value]) for value in values], dtype=torch.double
     )
 
     return weights
