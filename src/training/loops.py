@@ -254,20 +254,6 @@ def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=No
                 "test/mae": history["history_all"]["test_mae"][-1] if "test_mae" in history["history_all"] else None,
             }
         )
-    
-    # if record_categories is not None:
-    #     for category in record_categories:
-    #         for group_value in history[f"history_{category}"].get(f"history_{category}_group", {}):
-    #             label = str(label_decoder.get(category, {}).get(group_value, group_value))
-                
-    #             metrics.update(
-    #                 {
-    #                     f"cat_{category}/{label}/train_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["train_loss"][-1],
-    #                     f"cat_{category}/{label}/test_rmse": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_rmse"][-1],
-    #                     f"cat_{category}/{label}/test_mae": history[f"history_{category}"][f"history_{category}_group"][group_value]["test_mae"][-1],
-    #                 }
-            
-    #     )
                 
     if record_categories is not None:
         for category in record_categories:
