@@ -1,0 +1,8 @@
+Training configuration
+epochs = 100
+learning_rate = 0.0003
+weight_decay = 0.0001
+loss = SmoothL1Loss
+early_stopping_patience = 30
+Epoch 66/100:  65%|██████▌   | 65/100 [2:16:47<1:13:39, 126.26s/epoch, train_loss=0.5374, val_loss=0.9820, val_rmse=1.5649, val_mae=1.2065, test_loss=0.7922, test_rmse=1.3621, test_mae=1.0118, lr=7.50e-05]
+Early stopping at epoch 66: no improvement in val_loss for 30 epochs.

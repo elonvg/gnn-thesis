@@ -1,0 +1,244 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            a6g0pm4bozrxnobig2fgu8wj1xtirlo5:
+                codePath: /cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/gnn-thesis/notebooks/02_model_training.ipynb
+                codePathLocal: 02_model_training.ipynb
+                cpu_count: 32
+                cpu_count_logical: 32
+                cudaVersion: "13.1"
+                disk:
+                    /:
+                        total: "18843648000"
+                        used: "13085446144"
+                email: elonvginstrup@gmail.com
+                executable: /cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/bin/python
+                git:
+                    commit: 8f923f6d9981993cc87abd56afb49b6b1b85caa4
+                    remote: https://github.com/elonvg/gnn-thesis.git
+                gpu: Tesla T4
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Turing
+                      cudaCores: 2560
+                      memoryTotal: "16106127360"
+                      name: Tesla T4
+                      uuid: GPU-984bf822-8708-cf87-eba7-9c274d3d2a84
+                host: alvis2-07
+                memory:
+                    total: "607818444800"
+                os: Linux-4.18.0-553.109.1.el8_10.x86_64-x86_64-with-glibc2.28
+                program: /cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/gnn-thesis/notebooks/02_model_training.ipynb
+                python: CPython 3.11.3
+                root: /cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/gnn-thesis/notebooks
+                slurm:
+                    cluster_name: alvis
+                    conf: /tmp/slurmd/conf-cache/slurm.conf
+                    cpus_on_node: "4"
+                    export_env: NONE
+                    get_user_env: "1"
+                    gpus_on_node: "1"
+                    gpus_per_node: T4:1
+                    gtids: "0"
+                    job_account: naiss2025-5-534
+                    job_cpus_per_node: "4"
+                    job_end_time: "1777993387"
+                    job_gid: "10069639"
+                    job_gpus: "2"
+                    job_id: "6572292"
+                    job_name: sys/dashboard/sys/bc_alvis_codeserver
+                    job_nodelist: alvis2-07
+                    job_num_nodes: "1"
+                    job_partition: alvis
+                    job_qos: bonus1
+                    job_start_time: "1777978986"
+                    job_uid: "10069639"
+                    job_user: vollmers
+                    jobid: "6572292"
+                    localid: "0"
+                    mem_per_node: "71760"
+                    mpi_type: pmix
+                    nnodes: "1"
+                    nodeid: "0"
+                    nodelist: alvis2-07
+                    oom_kill_step: "0"
+                    pmix_direct_conn_ucx: "false"
+                    prio_process: "0"
+                    procid: "0"
+                    script_context: prolog_task
+                    submit_dir: /var/www/ood/apps/sys/dashboard
+                    submit_host: roberto
+                    task_pid: "1629544"
+                    tasks_per_node: "1"
+                    topology_addr: ib-root.ib-sw02.alvis2-07
+                    topology_addr_pattern: switch.switch.node
+                startedAt: "2026-05-05T11:17:23.298906Z"
+                writerId: a6g0pm4bozrxnobig2fgu8wj1xtirlo5
+        m:
+            - "1": epoch
+              "6":
+                - 3
+              "7": []
+            - "2": val/*
+              "5": 1
+              "6":
+                - 1
+              "7": []
+            - "2": test/*
+              "5": 1
+              "6":
+                - 1
+              "7": []
+            - "2": optimizer/*
+              "5": 1
+              "6":
+                - 1
+              "7": []
+            - "2": train/*
+              "5": 1
+              "6":
+                - 1
+              "7": []
+        python_version: 3.11.3
+        t:
+            "1":
+                - 1
+                - 5
+                - 53
+                - 77
+            "2":
+                - 1
+                - 5
+                - 53
+                - 77
+            "3":
+                - 2
+                - 7
+                - 15
+                - 16
+                - 62
+            "4": 3.11.3
+            "5": 0.25.1
+            "8":
+                - 1
+            "12": 0.25.1
+            "13": linux-x86_64
+batch_size:
+    value: 512
+butina_cluster_col:
+    value: Cluster_at_cutoff_0.2
+categorical_cols:
+    value:
+        - species_group
+        - conc_unit
+        - endpoint
+        - effect
+        - is_salt
+        - has_metal
+        - is_single_node
+categorical_dim:
+    value: 64
+dropout:
+    value: 0.3
+duration_fill_value:
+    value: 1e-06
+early_stopping_min_delta:
+    value: 0.0001
+early_stopping_patience:
+    value: 30
+filters:
+    value:
+        duration_unit:
+            - h
+        effect:
+            - MOR
+            - POP
+            - GRO
+            - BEH
+            - REP
+            - ITX
+            - PHY
+            - DVP
+            - MPH
+final_hidden_dim:
+    value: 512
+frac_test:
+    value: 0.2
+frac_train:
+    value: 0.7
+frac_valid:
+    value: 0.1
+gnn_hidden_dim:
+    value: 256
+gnn_model:
+    value: GCN
+gnn_out_dim:
+    value: 256
+learning_rate:
+    value: 0.0003
+log_transform_duration:
+    value: true
+loss:
+    value: SmoothL1Loss
+loss_beta:
+    value: 0.5
+max_conc_value:
+    value: 10000
+max_duration_hours:
+    value: 9000
+meta_dropout:
+    value: 0.3
+n_params_gnn:
+    value: 264960
+n_params_meta:
+    value: 694208
+n_params_total:
+    value: 1223361
+n_samples:
+    value: 300000
+num_atom_features:
+    value: 7
+num_bond_features:
+    value: 3
+num_layers:
+    value: 3
+num_timesteps:
+    value: 2
+numeric_dim:
+    value: 64
+numerical_cols:
+    value:
+        - duration
+        - fragment_count
+pretrained_tax_dim:
+    value: 768
+pretrained_taxid_output_dim:
+    value: 128
+random_state:
+    value: 11
+remove_lone:
+    value: false
+remove_metals:
+    value: false
+split_method:
+    value: butina
+split_salt:
+    value: false
+stratify_by:
+    value:
+        - species_group
+        - endpoint
+        - effect
+        - conc_unit
+tax_dim:
+    value: 64
+tax_embedding:
+    value:
+        taxid: 16
+taxonomy_encoder:
+    value: TaxonomyOneHot
+use_pretrained_taxid:
+    value: true
+weight_decay:
+    value: 0.0001

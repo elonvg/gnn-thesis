@@ -1,0 +1,82 @@
+{
+  "os": "Linux-4.18.0-553.109.1.el8_10.x86_64-x86_64-with-glibc2.28",
+  "python": "CPython 3.11.3",
+  "startedAt": "2026-05-01T19:08:49.335149Z",
+  "program": "/cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/gnn-thesis/notebooks/02_model_training.ipynb",
+  "codePath": "/cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/gnn-thesis/notebooks/02_model_training.ipynb",
+  "codePathLocal": "02_model_training.ipynb",
+  "git": {
+    "remote": "https://github.com/elonvg/gnn-thesis.git",
+    "commit": "8f923f6d9981993cc87abd56afb49b6b1b85caa4"
+  },
+  "email": "elonvginstrup@gmail.com",
+  "root": "/cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/gnn-thesis/notebooks",
+  "host": "alvis1-03",
+  "executable": "/cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/bin/python",
+  "cpu_count": 16,
+  "cpu_count_logical": 16,
+  "gpu": "Tesla V100-SXM2-32GB",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "18843648000",
+      "used": "10772381696"
+    }
+  },
+  "memory": {
+    "total": "809682456576"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "Tesla V100-SXM2-32GB",
+      "memoryTotal": "34359738368",
+      "cudaCores": 5120,
+      "architecture": "Volta",
+      "uuid": "GPU-33b200e9-3c55-0333-282a-81e9c8462241"
+    }
+  ],
+  "cudaVersion": "13.0",
+  "slurm": {
+    "cluster_name": "alvis",
+    "conf": "/tmp/slurmd/conf-cache/slurm.conf",
+    "cpus_on_node": "8",
+    "export_env": "NONE",
+    "get_user_env": "1",
+    "gpus_on_node": "1",
+    "gpus_per_node": "V100:1",
+    "gtids": "0",
+    "job_account": "naiss2025-5-534",
+    "job_cpus_per_node": "8",
+    "job_end_time": "1777669117",
+    "job_gid": "10069639",
+    "job_gpus": "0",
+    "job_id": "6556564",
+    "job_name": "sys/dashboard/sys/bc_alvis_codeserver",
+    "job_nodelist": "alvis1-03",
+    "job_num_nodes": "1",
+    "job_partition": "alvis",
+    "job_qos": "normal",
+    "job_start_time": "1777661916",
+    "job_uid": "10069639",
+    "job_user": "vollmers",
+    "jobid": "6556564",
+    "localid": "0",
+    "mem_per_node": "191520",
+    "mpi_type": "pmix",
+    "nnodes": "1",
+    "nodeid": "0",
+    "nodelist": "alvis1-03",
+    "oom_kill_step": "0",
+    "pmix_direct_conn_ucx": "false",
+    "prio_process": "0",
+    "procid": "0",
+    "script_context": "prolog_task",
+    "submit_dir": "/var/www/ood/apps/sys/dashboard",
+    "submit_host": "roberto",
+    "task_pid": "391420",
+    "tasks_per_node": "1",
+    "topology_addr": "ib-root.ib-sw01.alvis1-03",
+    "topology_addr_pattern": "switch.switch.node"
+  },
+  "writerId": "bba5u36wlucb6nbajxe9tvt6hxw45cw0"
+}
