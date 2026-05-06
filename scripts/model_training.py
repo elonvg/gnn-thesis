@@ -132,6 +132,7 @@ CATEGORICAL_DIM = 32
 NUMERIC_DIM = 32
 META_DROPOUT = 0.3
 
+USE_GNN = True
 GNN_HIDDEN_DIM = 128
 GNN_OUT_DIM = 128
 NUM_LAYERS = 3
@@ -464,15 +465,17 @@ def build_model(features, config_tax, config_categorical):
         dropout=META_DROPOUT,
     ).to(device)
 
-    model_gnn = AFPFlex(
-        in_channels=atom_feature_dim,
-        edge_dim=edge_feature_dim,
-        hidden_channels=GNN_HIDDEN_DIM,
-        out_channels=GNN_OUT_DIM,
-        num_layers=NUM_LAYERS,
-        num_timesteps=NUM_TIMESTEPS,
-        dropout=DROPOUT,
-    ).to(device)
+    model_gnn = None
+    if USE_GNN:
+        model_gnn = AFPFlex(
+            in_channels=atom_feature_dim,
+            edge_dim=edge_feature_dim,
+            hidden_channels=GNN_HIDDEN_DIM,
+            out_channels=GNN_OUT_DIM,
+            num_layers=NUM_LAYERS,
+            num_timesteps=NUM_TIMESTEPS,
+            dropout=DROPOUT,
+        ).to(device)
 
     model = ToxicityModel(
         model_gnn,
@@ -481,11 +484,13 @@ def build_model(features, config_tax, config_categorical):
     ).to(device)
 
     n_params_meta = sum(p.numel() for p in meta_encoder.parameters() if p.requires_grad)
-    n_params_gnn = sum(p.numel() for p in model_gnn.parameters() if p.requires_grad)
+    n_params_gnn = sum(p.numel() for p in model_gnn.parameters() if p.requires_grad) if model_gnn else 0
     n_params_total = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    gnn_name = type(model_gnn).__name__ if model_gnn is not None else "metadata_only"
 
     print()
     print(f"Device: {device}")
+    print(f"Use GNN branch: {USE_GNN}")
     print(f"Atom feature dim: {atom_feature_dim}")
     print(f"Edge feature dim: {edge_feature_dim}")
     print(f"Meta encoder trainable parameters: {n_params_meta:,}")
@@ -499,7 +504,8 @@ def build_model(features, config_tax, config_categorical):
         "n_params_meta": n_params_meta,
         "n_params_gnn": n_params_gnn,
         "n_params_total": n_params_total,
-        "gnn_name": type(model_gnn).__name__,
+        "gnn_enabled": USE_GNN,
+        "gnn_name": gnn_name,
     }
     return model, device, model_info
 
@@ -540,6 +546,7 @@ def init_wandb(model_info):
             "frac_test": FRAC_TEST,
             "batch_size": BATCH_SIZE,
             "taxonomy_encoder": TaxonomyOneHot.__name__,
+            "gnn_enabled": model_info["gnn_enabled"],
             "gnn_model": model_info["gnn_name"],
             "tax_dim": TAX_DIM,
             "pretrained_tax_dim": PRETRAINED_TAX_DIM,

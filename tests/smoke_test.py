@@ -546,6 +546,30 @@ def test_toxicity_model_infers_encoder_dimensions():
     assert model.encoder_dim == 3
 
 
+def test_toxicity_model_can_run_metadata_only():
+    class DummyMetaEncoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.output_dim = 3
+
+        def forward(self, data):
+            return data.meta_embed
+
+    batch = LoaderBatch(meta_embed=torch.randn(2, 3))
+    model = ToxicityModel(None, DummyMetaEncoder(), hidden_dim=7)
+
+    output = model(batch)
+
+    assert output.shape == (2, 1)
+    assert model.gnn_dim == 0
+    assert model.encoder_dim == 3
+
+
+def test_toxicity_model_requires_at_least_one_encoder():
+    with pytest.raises(ValueError, match="at least one enabled encoder"):
+        ToxicityModel(None, None)
+
+
 def test_train_uses_validation_loader_for_early_stopping():
     class ConstantModel(nn.Module):
         def __init__(self):

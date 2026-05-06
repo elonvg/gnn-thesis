@@ -149,16 +149,17 @@ def preprocess(
     if remove_metals:
         df = df[~df["SMILES"].apply(has_metal)].reset_index(drop=True)
 
+    df = preprocess_conc(
+        df,
+        max_conc=max_conc_value
+    )
+
     df = preprocess_duration(
         df,
         fill_value=duration_fill_value,
         max_hours=max_duration_hours,
         log_transform=log_transform_duration,
         keep_raw=keep_duration_raw,
-    )
-    df = preprocess_conc(
-        df,
-        max_conc=max_conc_value
     )
 
     return df
