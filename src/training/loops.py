@@ -109,6 +109,75 @@ def evaluate_by_groups(model, loader, loss_fn, device, group_cols):
     avg_loss, rmse, mean_ae, median_ae = evaluate(model, loader, loss_fn, device)
     return avg_loss, rmse, mean_ae, median_ae, _group_metrics_from_dataframe(results_df, group_cols, loss_fn)
 
+
+def add_joint_metrics_to_history(history, joint_metrics, main_category, sub_category, prefix=None):
+    joint_history = history.setdefault("joint_metrics", {}).setdefault(main_category, {})
+
+    for main_value, sub_metrics in joint_metrics.items():
+        main_history = joint_history.setdefault(main_value, {}).setdefault(sub_category, {})
+
+        for sub_value, metrics in sub_metrics.items():
+            entry = main_history.setdefault(sub_value, {})
+
+            if prefix is None:
+                entry.update(metrics)
+                continue
+
+            for metric_name, metric_value in metrics.items():
+                key = f"{prefix}_{metric_name}"
+                if metric_name == "n":
+                    entry[key] = metric_value
+                else:
+                    entry.setdefault(key, []).append(metric_value)
+
+    return history
+
+
+def evaluate_by_joint_group(
+    model,
+    loader,
+    loss_fn,
+    device,
+    main_category,
+    sub_category,
+    history=None,
+    prefix=None,
+):
+    if main_category == sub_category:
+        raise ValueError("main_category and sub_category must be different columns.")
+
+    results_df = predict_df(model, loader, device, cols=[main_category, sub_category])
+    joint_metrics = {}
+
+    for (main_value, sub_value), group_df in results_df.groupby(
+        [main_category, sub_category], dropna=False
+    ):
+        predictions = torch.tensor(group_df["pred_norm"].values, dtype=torch.float32)
+        targets = torch.tensor(group_df["actual_norm"].values, dtype=torch.float32)
+
+        loss = loss_fn(predictions, targets).item()
+        rmse, mean_ae, median_ae = regression_metrics(predictions, targets)
+
+        main_metrics = joint_metrics.setdefault(main_value, {})
+        main_metrics[sub_value] = {
+            "loss": loss,
+            "rmse": rmse,
+            "mean_ae": mean_ae,
+            "median_ae": median_ae,
+            "n": int(len(group_df)),
+        }
+
+    if history is not None:
+        add_joint_metrics_to_history(
+            history,
+            joint_metrics,
+            main_category,
+            sub_category,
+            prefix=prefix,
+        )
+
+    return joint_metrics
+
 def build_label_decoders(label_encoder):
     if label_encoder is None:
         return {}
@@ -241,7 +310,31 @@ def _current_lr(optimizer):
     return optimizer.param_groups[0].get("lr")
 
 
-def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=None, record_categories=None, label_decoder=None, optimizer=None):
+def _normalize_joint_categories(record_joint_categories):
+    if record_joint_categories is None:
+        return None
+    if isinstance(record_joint_categories, str) or len(record_joint_categories) != 2:
+        raise ValueError("record_joint_categories must be a pair of category names.")
+
+    main_category, sub_category = record_joint_categories
+    if main_category == sub_category:
+        raise ValueError("record_joint_categories must contain two different categories.")
+
+    return main_category, sub_category
+
+
+def _build_run_log(
+    epoch,
+    history,
+    train_loss,
+    val_metrics=None,
+    test_metrics=None,
+    record_categories=None,
+    record_joint_categories=None,
+    label_decoder=None,
+    optimizer=None,
+):
+    label_decoder = label_decoder or {}
     metrics = {
         "epoch": epoch + 1,
         "train/loss": history["history_all"]["train_loss"][-1],
@@ -280,6 +373,20 @@ def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=No
                     }
             
         )
+
+    if record_joint_categories is not None:
+        main_category, sub_category = record_joint_categories
+        joint_history = history.get("joint_metrics", {}).get(main_category, {})
+
+        for main_value, main_history in joint_history.items():
+            main_label = str(label_decoder.get(main_category, {}).get(main_value, main_value))
+
+            for sub_value, sub_history in main_history.get(sub_category, {}).items():
+                sub_label = str(label_decoder.get(sub_category, {}).get(sub_value, sub_value))
+                metric_prefix = f"joint_{main_label}/{sub_category}/{sub_label}"
+
+                if val_metrics is not None and sub_history.get("val_loss"):
+                    metrics[f"{metric_prefix}/val_median_ae"] = sub_history["val_median_ae"][-1]
 
     lr = _current_lr(optimizer)
     if lr is not None:
@@ -325,7 +432,7 @@ def _propagate_history_metadata(history):
     metadata = {key: history["history_all"].get(key) for key in metadata_keys}
 
     for history_name, category_history in history.items():
-        if history_name == "history_all":
+        if history_name in ("history_all", "joint_metrics"):
             continue
 
         category_history.update(metadata)
@@ -356,6 +463,7 @@ def train(
     early_stopping_min_delta=0.0,
     verbose_every=10,
     record_categories=None,
+    record_joint_categories=None,
     label_encoder=None,
     run=None,
 ):
@@ -377,6 +485,7 @@ def train(
     for category in history:
         history[category]["monitor_name"] = monitor_name
     label_decoder = build_label_decoders(label_encoder) if label_encoder is not None else None
+    record_joint_categories = _normalize_joint_categories(record_joint_categories)
 
     best_monitor_value = float("inf")
     best_model_state = copy.deepcopy(model.state_dict())
@@ -434,7 +543,7 @@ def train(
                 history["history_all"]["test_median_ae"].append(val_metrics[3])
 
             for metric_name, metric_history in history.items():
-                if metric_name == "history_all":
+                if metric_name in ("history_all", "joint_metrics"):
                     continue
 
                 metric_history["train_loss"].append(train_loss)
@@ -453,6 +562,41 @@ def train(
                     if test_group_metrics is not None:
                         _record_group_metrics(metric_history, group_key, "test", test_group_metrics.get(category, {}))
                     _finalize_group_history(metric_history, group_key)
+
+            if record_joint_categories is not None:
+                main_category, sub_category = record_joint_categories
+                evaluate_by_joint_group(
+                    model,
+                    train_loader,
+                    loss_fn,
+                    device,
+                    main_category,
+                    sub_category,
+                    history=history,
+                    prefix="train",
+                )
+                if val_loader is not None:
+                    evaluate_by_joint_group(
+                        model,
+                        val_loader,
+                        loss_fn,
+                        device,
+                        main_category,
+                        sub_category,
+                        history=history,
+                        prefix="val",
+                    )
+                if test_loader is not None:
+                    evaluate_by_joint_group(
+                        model,
+                        test_loader,
+                        loss_fn,
+                        device,
+                        main_category,
+                        sub_category,
+                        history=history,
+                        prefix="test",
+                    )
 
             if val_metrics is not None:
                 monitor_value = val_metrics[0]
@@ -486,6 +630,7 @@ def train(
                         val_metrics=val_metrics,
                         test_metrics=test_metrics,
                         record_categories=record_categories,
+                        record_joint_categories=record_joint_categories,
                         label_decoder=label_decoder,
                         optimizer=optimizer,
                     )
