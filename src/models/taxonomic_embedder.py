@@ -225,3 +225,4 @@ class PretrainedTaxidEncoder(nn.Module):
 
         embeddings = self.embedder(taxids).squeeze(1)
         return self.output_projection(embeddings)
+        # return embeddings

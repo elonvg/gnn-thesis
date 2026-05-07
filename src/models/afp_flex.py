@@ -148,7 +148,7 @@ class AFPFlex(torch.nn.Module):
         # Additional attentive layers
         # Note: using GATConv instead of GATEConv - no edge features
         for conv, gru in zip(self.atom_convs, self.atom_grus):
-            h = conv(xg, edge_index) # Computer attention + context vector
+            h = conv(xg, edge_index) # Compute attention + context vector
             h = F.elu(h)
             h = F.dropout(h, p=self.dropout, training=self.training)
             xg = gru(h, xg).relu() # Updates atom state

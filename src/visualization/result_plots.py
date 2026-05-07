@@ -100,7 +100,7 @@ def plot_group_mae(summary, category, top_n=10):
         return fig
 
     plot_df = summary.head(top_n).iloc[::-1]
-    labels = [f"{group} (n_test={n})" for group, n in zip(plot_df["group"], plot_df["n"])]
+    labels = [f"{group} (n={n})" for group, n in zip(plot_df["group"], plot_df["n"])]
 
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.barh(labels, plot_df["baseline_mae"], color="#c7ced6", label="Train subgroup mean")

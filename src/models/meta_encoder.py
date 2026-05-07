@@ -12,7 +12,8 @@ def _num_classes_from_config(value):
 
 
 class NumericalEncoder(nn.Module):
-    # Numerical encoder for metadata such as duration, fragment_count, is_single_node
+    # Numerical encoder for metadata such as duration, fragment_count
+
 
     def __init__(self, numerical_columns=None, output_dim=16, dropout=0.2):
         super().__init__()

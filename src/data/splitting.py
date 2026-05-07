@@ -409,7 +409,9 @@ def butina_split(
     )
 
 
-def show_split_info(train_dataset, val_dataset, test_dataset):
+def show_split_info(train_dataset, val_dataset=None, test_dataset=None):
+    val_dataset = val_dataset or []
+    test_dataset = test_dataset or []
 
     train_targets = np.array([g.y.item() for g in train_dataset])
     val_targets = np.array([g.y.item() for g in val_dataset])
@@ -422,18 +424,22 @@ def show_split_info(train_dataset, val_dataset, test_dataset):
 
     print(f"Train size: {len(train_dataset):,} ({len(train_dataset) / total_len:.1%})")
     print(f"Val size:   {len(val_dataset):,} ({len(val_dataset) / total_len:.1%})")
-    print(f"Test size:  {len(test_dataset):,} ({len(test_dataset) / total_len:.1%})")
+    if test_dataset:
+        print(f"Test size:  {len(test_dataset):,} ({len(test_dataset) / total_len:.1%})")
     print()
     print(f"Unique molecules in train: {len(set(train_smiles)):,}")
     print(f"Unique molecules in val:   {len(set(val_smiles)):,}")
-    print(f"Unique molecules in test:  {len(set(test_smiles)):,}")
     print(f"Val molecules not in train:  {len(set(val_smiles) - set(train_smiles)):,}")
-    print(f"Test molecules not in train: {len(set(test_smiles) - set(train_smiles)):,}")
+    if test_dataset:
+        print(f"Unique molecules in test:  {len(set(test_smiles)):,}")
+        print(f"Test molecules not in train: {len(set(test_smiles) - set(train_smiles)):,}")
     print()
     print("Target distribution")
     print(f"Train mean/std: {train_targets.mean():.4f} / {train_targets.std():.4f}")
-    print(f"Val mean/std:   {val_targets.mean():.4f} / {val_targets.std():.4f}")
-    print(f"Test mean/std:  {test_targets.mean():.4f} / {test_targets.std():.4f}")
+    if val_dataset:
+        print(f"Val mean/std:   {val_targets.mean():.4f} / {val_targets.std():.4f}")
+    if test_dataset:
+        print(f"Test mean/std:  {test_targets.mean():.4f} / {test_targets.std():.4f}")
 
     train_y = [g.y.item() for g in train_dataset]
     test_y = [g.y.item() for g in test_dataset]
@@ -441,11 +447,17 @@ def show_split_info(train_dataset, val_dataset, test_dataset):
 
     plt.figure(figsize=(8, 4))
     plt.hist(train_y, bins=50, alpha=0.5, label="Train", density=True)
-    if val_y is not None:
+    if val_y:
         plt.hist(val_y, bins=50, alpha=0.5, label="Val", density=True)
-    plt.hist(test_y, bins=50, alpha=0.5, label="Test", density=True)
+    if test_y:
+        plt.hist(test_y, bins=50, alpha=0.5, label="Test", density=True)
     plt.xlabel("log10c")
     plt.legend()
-    title = "Target distribution: train vs val vs test" if val_y is not None else "Target distribution: train vs test"
+    split_names = ["train"]
+    if val_y:
+        split_names.append("val")
+    if test_y:
+        split_names.append("test")
+    title = "Target distribution: " + " vs ".join(split_names)
     plt.title(title)
     plt.show()

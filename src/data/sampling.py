@@ -232,12 +232,13 @@ def display_dataloader_distribution(dataloaders, attribute, species_group_decode
     plt.show()
 
 
-def show_loader_info(attribute, train_loader, val_loader, test_loader, species_group_decoder):
+def show_loader_info(attribute, train_loader, val_loader, test_loader=None, species_group_decoder=None):
     loaders = {
         "Train": train_loader,
         "Val": val_loader,
-        "Test": test_loader,
     }
+    if test_loader is not None:
+        loaders["Test"] = test_loader
 
     for loader_name, loader in loaders.items():
         dataset_size = len(loader.dataset) if hasattr(loader, "dataset") else "unknown"

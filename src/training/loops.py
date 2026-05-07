@@ -73,9 +73,9 @@ def evaluate(model, loader, loss_fn, device):
     avg_loss = total_loss / len(loader)
     predictions = torch.cat(predictions)
     targets = torch.cat(targets)
-    rmse, mae = regression_metrics(predictions, targets)
+    rmse, mean_ae, median_ae = regression_metrics(predictions, targets)
 
-    return avg_loss, rmse, mae
+    return avg_loss, rmse, mean_ae, median_ae
 
 
 def _group_metrics_from_dataframe(df, group_cols, loss_fn):
@@ -90,11 +90,12 @@ def _group_metrics_from_dataframe(df, group_cols, loss_fn):
             targets = torch.tensor(group_df["actual_norm"].values, dtype=torch.float32)
 
             loss = loss_fn(predictions, targets).item()
-            rmse, mae = regression_metrics(predictions, targets)
+            rmse, mean_ae, median_ae = regression_metrics(predictions, targets)
             column_metrics[group_value] = {
                 "loss": loss,
                 "rmse": rmse,
-                "mae": mae,
+                "mean_ae": mean_ae,
+                "median_ae": median_ae,
                 "n": int(len(group_df)),
             }
 
@@ -105,8 +106,8 @@ def _group_metrics_from_dataframe(df, group_cols, loss_fn):
 
 def evaluate_by_groups(model, loader, loss_fn, device, group_cols):
     results_df = predict_df(model, loader, device, cols=group_cols)
-    avg_loss, rmse, mae = evaluate(model, loader, loss_fn, device)
-    return avg_loss, rmse, mae, _group_metrics_from_dataframe(results_df, group_cols, loss_fn)
+    avg_loss, rmse, mean_ae, median_ae = evaluate(model, loader, loss_fn, device)
+    return avg_loss, rmse, mean_ae, median_ae, _group_metrics_from_dataframe(results_df, group_cols, loss_fn)
 
 def build_label_decoders(label_encoder):
     if label_encoder is None:
@@ -127,9 +128,9 @@ def _init_history(record_categories=None, include_val=False, include_test=False)
     for category_name, category_history in history.items():
         category_history["train_loss"] = []
         if include_val:
-            category_history.update({"val_loss": [], "val_rmse": [], "val_mae": []})
+            category_history.update({"val_loss": [], "val_rmse": [], "val_mean_ae": [], "val_median_ae": []})
         if include_test:
-            category_history.update({"test_loss": [], "test_rmse": [], "test_mae": []})
+            category_history.update({"test_loss": [], "test_rmse": [], "test_mean_ae": [], "test_median_ae": []})
 
         category_history.update(
             {
@@ -144,10 +145,11 @@ def _init_history(record_categories=None, include_val=False, include_test=False)
     return history
 
 
-def _record_categories(history, prefix, loss, rmse, mae):
+def _record_categories(history, prefix, loss, rmse, mean_ae, median_ae):
     history[f"{prefix}_loss"].append(loss)
     history[f"{prefix}_rmse"].append(rmse)
-    history[f"{prefix}_mae"].append(mae)
+    history[f"{prefix}_mean_ae"].append(mean_ae)
+    history[f"{prefix}_median_ae"].append(median_ae)
 
 
 def _record_group_metrics(history, group_key, prefix, group_metrics):
@@ -156,13 +158,16 @@ def _record_group_metrics(history, group_key, prefix, group_metrics):
     all_keys = [
         "train_loss",
         "train_rmse",
-        "train_mae",
+        "train_mean_ae",
+        "train_median_ae",
         "val_loss",
         "val_rmse",
-        "val_mae",
+        "val_mean_ae",
+        "val_median_ae",
         "test_loss",
         "test_rmse",
-        "test_mae",
+        "test_mean_ae",
+        "test_median_ae"
     ]
 
     if not group_metrics:
@@ -185,16 +190,19 @@ def _record_group_metrics(history, group_key, prefix, group_metrics):
 
         entry[f"{prefix}_loss"].append(value_metrics["loss"])
         entry[f"{prefix}_rmse"].append(value_metrics["rmse"])
-        entry[f"{prefix}_mae"].append(value_metrics["mae"])
+        entry[f"{prefix}_mean_ae"].append(value_metrics["mean_ae"])
+        entry[f"{prefix}_median_ae"].append(value_metrics["median_ae"])
         entry[f"{prefix}_n"] = value_metrics.get("n")
 
 
-def _format_progress(prefix, loss, rmse=None, mae=None):
+def _format_progress(prefix, loss, rmse=None, mean_ae=None, median_ae=None):
     metrics = [f"{prefix} Loss = {loss:.4f}"]
     if rmse is not None:
         metrics.append(f"{prefix} RMSE = {rmse:.4f}")
-    if mae is not None:
-        metrics.append(f"{prefix} MAE = {mae:.4f}")
+    if mean_ae is not None:
+        metrics.append(f"{prefix} mean_ae = {mean_ae:.4f}")
+    if median_ae is not None:
+        metrics.append(f"{prefix} median_ae = {median_ae:.4f}")
     return ", ".join(metrics)
 
 
@@ -206,7 +214,8 @@ def _build_progress_postfix(train_loss, val_metrics=None, test_metrics=None, opt
             {
                 "val_loss": f"{val_metrics[0]:.4f}",
                 "val_rmse": f"{val_metrics[1]:.4f}",
-                "val_mae": f"{val_metrics[2]:.4f}",
+                "val_mean_ae": f"{val_metrics[2]:.4f}",
+                "val_median_ae": f"{val_metrics[2]:.4f}",
             }
         )
 
@@ -215,7 +224,8 @@ def _build_progress_postfix(train_loss, val_metrics=None, test_metrics=None, opt
             {
                 "test_loss": f"{test_metrics[0]:.4f}",
                 "test_rmse": f"{test_metrics[1]:.4f}",
-                "test_mae": f"{test_metrics[2]:.4f}",
+                "test_mean_ae": f"{test_metrics[2]:.4f}",
+                "test_median_ae": f"{test_metrics[2]:.4f}",
             }
         )
 
@@ -242,7 +252,8 @@ def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=No
             {
                 "val/loss": history["history_all"]["val_loss"][-1] if "val_loss" in history["history_all"] else None,
                 "val/rmse": history["history_all"]["val_rmse"][-1] if "val_rmse" in history["history_all"] else None,
-                "val/mae": history["history_all"]["val_mae"][-1] if "val_mae" in history["history_all"] else None,
+                "val/mean_ae": history["history_all"]["val_mean_ae"][-1] if "val_mean_ae" in history["history_all"] else None,
+                "val/median_ae": history["history_all"]["val_median_ae"][-1] if "val_median_ae" in history["history_all"] else None,
             }
         )
 
@@ -251,7 +262,8 @@ def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=No
             {
                 "test/loss": history["history_all"]["test_loss"][-1] if "test_loss" in history["history_all"] else None,
                 "test/rmse": history["history_all"]["test_rmse"][-1] if "test_rmse" in history["history_all"] else None,
-                "test/mae": history["history_all"]["test_mae"][-1] if "test_mae" in history["history_all"] else None,
+                "test/mean_ae": history["history_all"]["test_mean_ae"][-1] if "test_mean_ae" in history["history_all"] else None,
+                "test/median_ae": history["history_all"]["test_median_ae"][-1] if "test_median_ae" in history["history_all"] else None,
             }
         )
                 
@@ -263,8 +275,8 @@ def _build_run_log(epoch, history, train_loss, val_metrics=None, test_metrics=No
                 metrics.update(
                     {
                         f"cat_{category}/{label}/train_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["train_loss"][-1],
-                        f"cat_{category}/{label}/test_rmse": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_loss"][-1],
-                        f"cat_{category}/{label}/test_mae": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_mae"][-1],
+                        f"cat_{category}/{label}/val_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_loss"][-1],
+                        f"cat_{category}/{label}/val_median_ae": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_median_ae"][-1],
                     }
             
         )
@@ -284,13 +296,16 @@ def _finalize_group_history(history, group_key):
     all_keys = [
         "train_loss",
         "train_rmse",
-        "train_mae",
+        "train_mean_ae",
+        "train_median_ae",
         "val_loss",
         "val_rmse",
-        "val_mae",
+        "val_mean_ae",
+        "val_median_ae",
         "test_loss",
         "test_rmse",
-        "test_mae",
+        "test_mean_ae",
+        "test_median_ae",
     ]
 
     for entry in history[group_key].values():
@@ -380,7 +395,7 @@ def train(
 
             train_group_metrics = None
             if record_categories is not None:
-                _, _, _, train_group_metrics = evaluate_by_groups(
+                _, _, _, _, train_group_metrics = evaluate_by_groups(
                     model, train_loader, loss_fn, device, record_categories
                 )
 
@@ -388,10 +403,10 @@ def train(
             val_group_metrics = None
             if val_loader is not None:
                 if record_categories is not None:
-                    val_loss, val_rmse, val_mae, val_group_metrics = evaluate_by_groups(
+                    val_loss, val_rmse, val_mean_ae, val_median_ae, val_group_metrics = evaluate_by_groups(
                         model, val_loader, loss_fn, device, record_categories
                     )
-                    val_metrics = (val_loss, val_rmse, val_mae)
+                    val_metrics = (val_loss, val_rmse, val_mean_ae, val_median_ae)
                 else:
                     val_metrics = evaluate(model, val_loader, loss_fn, device)
 
@@ -399,22 +414,24 @@ def train(
             test_group_metrics = None
             if test_loader is not None:
                 if record_categories is not None:
-                    test_loss, test_rmse, test_mae, test_group_metrics = evaluate_by_groups(
+                    test_loss, test_rmse, test_mean_ae, test_median_ae, test_group_metrics = evaluate_by_groups(
                         model, test_loader, loss_fn, device, record_categories
                     )
-                    test_metrics = (test_loss, test_rmse, test_mae)
+                    test_metrics = (test_loss, test_rmse, test_mean_ae, test_median_ae)
                 else:
                     test_metrics = evaluate(model, test_loader, loss_fn, device)
 
             if val_metrics is not None:
                 history["history_all"]["val_loss"].append(val_metrics[0])
                 history["history_all"]["val_rmse"].append(val_metrics[1])
-                history["history_all"]["val_mae"].append(val_metrics[2])
+                history["history_all"]["val_mean_ae"].append(val_metrics[2])
+                history["history_all"]["val_median_ae"].append(val_metrics[3])
 
             if test_metrics is not None:
                 history["history_all"]["test_loss"].append(test_metrics[0])
                 history["history_all"]["test_rmse"].append(test_metrics[1])
-                history["history_all"]["test_mae"].append(test_metrics[2])
+                history["history_all"]["test_mean_ae"].append(test_metrics[2])
+                history["history_all"]["test_median_ae"].append(val_metrics[3])
 
             for metric_name, metric_history in history.items():
                 if metric_name == "history_all":
