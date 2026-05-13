@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn import GRUCell, Linear, Parameter
 
-from torch_geometric.nn import GATConv, MessagePassing, global_add_pool
+from torch_geometric.nn import GATConv, MessagePassing, global_add_pool, global_mean_pool
 from torch_geometric.nn.inits import glorot, zeros
 from torch_geometric.typing import Adj, OptTensor
 from torch_geometric.utils import softmax
@@ -157,7 +157,7 @@ class AFPFlex(torch.nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
 
-        out = global_add_pool(xg, batch).relu_() # Inital molecule state vector
+        out = global_mean_pool(xg, batch).relu_() # Inital molecule state vector
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
@@ -169,7 +169,7 @@ class AFPFlex(torch.nn.Module):
         
         # Output for edgess graphs
         xl = self.linlone(x0)
-        atom_out = global_add_pool(xl, batch) # Sum all state vectors that belong to same graph
+        atom_out = global_mean_pool(xl, batch) # Sum all state vectors that belong to same graph
 
         # Predictor:
         out = torch.where(has_edges.unsqueeze(-1), gnn_out, atom_out) # Filter for graphs with/without edges
