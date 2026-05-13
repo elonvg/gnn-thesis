@@ -4,14 +4,13 @@
 # # Setup
 
 
-n_folds = 5
-fold_id = 0
-MAX_ROWS = 1000
-# MAX_ROWS = None  # set to an integer like 15000 for faster experiments
-
 from pathlib import Path
 import os
 import sys
+
+n_folds = int(os.environ.get("N_FOLDS", 5))
+fold_id = int(os.environ.get("FOLD_ID", os.environ.get("SLURM_ARRAY_TASK_ID", 0)))
+MAX_ROWS = None  # set to an integer like 15000 for faster experiments
 
 PROJECT_ROOT = None
 for candidate in [Path.cwd(), *Path.cwd().parents]:
