@@ -94,34 +94,43 @@ def compute_weights(target_distribution, values):
     return weights
 
 
-def LoadData(dataset, batch_size, shuffle=False, attribute="species_group", target_dataset=None):
-    if target_dataset is None:
-        target_dataset = dataset
-    
-    # Compute target distribution from target dataset
-    target_values = collect_attribute_values(target_dataset, attribute)
-
-    target_attr_dist = compute_attribute_distribution(target_values)
-
-    # Collect values (list of specified attribute for each point in dataset)
-    values = collect_attribute_values(dataset, attribute)
-
-    # Compute weights : target/count
-    weights = compute_weights(target_attr_dist, values)
-
+def LoadData(
+    dataset,
+    batch_size,
+    sampler_type="weighted",
+    attribute="species_group",
+    target_dataset=None,
+    shuffle=False,
+):
     # Create sampler
-    num_samples = len(dataset)
-    sampler = WeightedRandomSampler(
-        weights=weights,
-        num_samples=num_samples,
-        replacement=True,
-    )
+    if sampler_type == "weighted":
+        if target_dataset is None:
+            target_dataset = dataset
+
+        # Compute target distribution from target dataset
+        target_values = collect_attribute_values(target_dataset, attribute)
+        target_attr_dist = compute_attribute_distribution(target_values)
+
+        # Collect values (list of specified attribute for each point in dataset)
+        values = collect_attribute_values(dataset, attribute)
+
+        # Compute weights : target/count
+        weights = compute_weights(target_attr_dist, values)
+        sampler = WeightedRandomSampler(
+            weights=weights,
+            num_samples=len(dataset),
+            replacement=True,
+        )
+    elif sampler_type == "sequential":
+        sampler = None  # DataLoader will use default sequential sampling
+    else:
+        raise ValueError("sampler_type must be either 'weighted' or 'sequential'.")
 
     # Create dataloader
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=False,
+        shuffle=shuffle if sampler is None else False,
         sampler=sampler,
     )
 

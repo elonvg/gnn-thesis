@@ -11,6 +11,24 @@ def _num_classes_from_config(value):
     return value
 
 
+def _category_ids(ids, num_classes):
+    ids = ids.long()
+    if ids.numel() == 0:
+        return ids
+
+    if (ids < 0).any():
+        ids = ids.clone()
+        ids[ids < 0] = num_classes - 1
+
+    if (ids >= num_classes).any():
+        raise ValueError(
+            f"Categorical ids must be smaller than num_classes={num_classes}; "
+            f"got max id {int(ids.max())}."
+        )
+
+    return ids
+
+
 class NumericalEncoder(nn.Module):
     # Numerical encoder for metadata such as duration, fragment_count
 
@@ -69,7 +87,7 @@ class TaxonomyEncoder(nn.Module):
         embedded_list = []
         for col, emb_layer in self.embeddings.items():
             # Get the IDs for the taxonomic ranks
-            ids = getattr(data, col)  # Assuming data has attributes like data.taxid, data.genus, etc.
+            ids = _category_ids(getattr(data, col), emb_layer.num_embeddings)
             embedded_list.append(emb_layer(ids))
         
         # Concatenate all embeddings into one vector
@@ -101,7 +119,7 @@ class TaxonomyOneHot(nn.Module):
         encoded_list = []
 
         for col, num_classes in self.num_classes.items():
-            ids = getattr(data, col).long()
+            ids = _category_ids(getattr(data, col), num_classes)
             encoded_list.append(F.one_hot(ids, num_classes=num_classes).float())
 
         concatenated = torch.cat(encoded_list, dim=-1)
@@ -130,7 +148,7 @@ class CategoricalOneHot(nn.Module):
         encoded_list = []
 
         for col, num_classes in self.num_classes.items():
-            ids = getattr(data, col).long()
+            ids = _category_ids(getattr(data, col), num_classes)
             encoded_list.append(F.one_hot(ids, num_classes=num_classes).float())
 
         concatenated = torch.cat(encoded_list, dim=-1)
@@ -177,27 +195,23 @@ class MetaEncoder(nn.Module):
             dropout=dropout
         ) if numerical_columns else None
 
-        # pretrained_taxid_encoder_kwargs = dict(pretrained_taxid_encoder_kwargs or {})
-        # if pretrained_taxid_path is not None:
-        #     pretrained_taxid_encoder_kwargs.setdefault("embedding_path", pretrained_taxid_path)
-        # pretrained_taxid_encoder_kwargs.setdefault("output_dim", pretrained_taxid_output_dim)
-        # pretrained_taxid_encoder_kwargs.setdefault("taxid_field", pretrained_taxid_field)
+        pretrained_taxid_encoder_kwargs = dict(pretrained_taxid_encoder_kwargs or {})
+        if pretrained_taxid_path is not None:
+            pretrained_taxid_encoder_kwargs.setdefault("embedding_path", pretrained_taxid_path)
+        pretrained_taxid_encoder_kwargs.setdefault("taxonomic_embedding_dict", None)
+        pretrained_taxid_encoder_kwargs.setdefault("embedding_dim", pretrained_tax_dim)
+        pretrained_taxid_encoder_kwargs.setdefault("output_dim", pretrained_taxid_output_dim)
+        pretrained_taxid_encoder_kwargs.setdefault("dropout", dropout)
+        pretrained_taxid_encoder_kwargs.setdefault("taxid_field", "taxid_raw")
 
         use_pretrained_taxid = (
             pretrained_taxid_encoder_cls is not None
             and (
-                pretrained_taxid_path is not None
-                or "taxonomic_embedding_dict" in pretrained_taxid_encoder_kwargs
+                pretrained_taxid_encoder_kwargs.get("embedding_path") is not None
+                or pretrained_taxid_encoder_kwargs.get("taxonomic_embedding_dict") is not None
             )
         )
-        self.pretrained_taxid_encoder = (pretrained_taxid_encoder_cls(
-            embedding_path=pretrained_taxid_path,
-            taxonomic_embedding_dict=None,
-            embedding_dim=pretrained_tax_dim,
-            output_dim=pretrained_taxid_output_dim,
-            dropout=dropout,
-            taxid_field="taxid_raw"
-        )
+        self.pretrained_taxid_encoder = (pretrained_taxid_encoder_cls(**pretrained_taxid_encoder_kwargs)
             if use_pretrained_taxid
             else None
         )

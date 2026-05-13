@@ -284,7 +284,7 @@ def _build_progress_postfix(train_loss, val_metrics=None, test_metrics=None, opt
                 "val_loss": f"{val_metrics[0]:.4f}",
                 "val_rmse": f"{val_metrics[1]:.4f}",
                 "val_mean_ae": f"{val_metrics[2]:.4f}",
-                "val_median_ae": f"{val_metrics[2]:.4f}",
+                "val_median_ae": f"{val_metrics[3]:.4f}",
             }
         )
 
@@ -294,7 +294,7 @@ def _build_progress_postfix(train_loss, val_metrics=None, test_metrics=None, opt
                 "test_loss": f"{test_metrics[0]:.4f}",
                 "test_rmse": f"{test_metrics[1]:.4f}",
                 "test_mean_ae": f"{test_metrics[2]:.4f}",
-                "test_median_ae": f"{test_metrics[2]:.4f}",
+                "test_median_ae": f"{test_metrics[3]:.4f}",
             }
         )
 
@@ -540,7 +540,7 @@ def train(
                 history["history_all"]["test_loss"].append(test_metrics[0])
                 history["history_all"]["test_rmse"].append(test_metrics[1])
                 history["history_all"]["test_mean_ae"].append(test_metrics[2])
-                history["history_all"]["test_median_ae"].append(val_metrics[3])
+                history["history_all"]["test_median_ae"].append(test_metrics[3])
 
             for metric_name, metric_history in history.items():
                 if metric_name in ("history_all", "joint_metrics"):

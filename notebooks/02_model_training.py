@@ -4,11 +4,13 @@
 # # Setup
 
 
-n_folds = 4
-MAX_ROWS = 100000  # set to an integer like 15000 for faster experiments
-# MAX_ROWS = None
+n_folds = 5
+fold_id = 0
+MAX_ROWS = 1000
+# MAX_ROWS = None  # set to an integer like 15000 for faster experiments
 
 from pathlib import Path
+import os
 import sys
 
 PROJECT_ROOT = None
@@ -22,6 +24,10 @@ if PROJECT_ROOT is None:
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_ROOT / "outputs" / ".matplotlib"))
+os.environ.setdefault("MPLBACKEND", "Agg")
+(PROJECT_ROOT / "outputs" / ".matplotlib").mkdir(parents=True, exist_ok=True)
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -52,6 +58,8 @@ pd.set_option("display.max_columns", 40)
 pd.set_option("display.max_colwidth", 80)
 
 DATA_PATH = PROJECT_ROOT / "Data" / "toxicity_all.csv"
+if not DATA_PATH.exists():
+    raise FileNotFoundError(f"Data file not found: {DATA_PATH}")
 
 print("Setup complete")
 print(f"Data file: {DATA_PATH}")
@@ -191,15 +199,18 @@ LOG_TRANSFORM_DURATION = True
 
 df_processed = preprocess(
     df_filtered.copy(),
-    split_salts=False,
-    remove_lone=False,
-    remove_metals=False,
+    split_salts=SPLIT_SALTS,
+    remove_lone=REMOVE_LONE,
+    remove_metals=REMOVE_METALS,
     max_conc_value=MAX_CONC_VALUE,
     duration_fill_value=DURATION_FILL_VALUE,
     max_duration_hours=MAX_DURATION_HOURS,
-    log_transform_duration=True,
+    log_transform_duration=LOG_TRANSFORM_DURATION,
     keep_duration_raw=True,
 )
+
+if df_processed.empty:
+    raise ValueError("No rows remain after preprocessing; check filters and preprocessing settings.")
 
 print(f"Rows before preprocessing: {len(df_filtered):,}")
 print(f"Rows after preprocessing:  {len(df_processed):,}")
@@ -239,6 +250,8 @@ print(f"{len(df_processed):,} rows with graph features created")
 
 USE_PRETRAINED_TAXID = True
 PRETRAINED_TAXID_PATH = PROJECT_ROOT / "Data" / "moredata" / "pretrained_tax_emb.pkl.zip"
+if USE_PRETRAINED_TAXID and not PRETRAINED_TAXID_PATH.exists():
+    raise FileNotFoundError(f"Pretrained taxid embedding file not found: {PRETRAINED_TAXID_PATH}")
 
 tax_embedding = {
     "taxid": 16,
@@ -356,6 +369,8 @@ from sklearn.model_selection import GroupKFold
 from src.data.splitting import load_butina_clusters, _build_dataset
 
 cluster_csv_path = PROJECT_ROOT / "Data" / "moredata" / "original" / "butina_cluster_lookup.csv"
+if not cluster_csv_path.exists():
+    raise FileNotFoundError(f"Butina cluster lookup file not found: {cluster_csv_path}")
 
 cluster_col = "Cluster_at_cutoff_0.2"
 
@@ -382,11 +397,19 @@ print(f"Unique groups: {groups.nunique():,}")
 print(f"Missing group values: {groups.isna().sum():,}")
 print(f"Fallback missing-cluster groups: {groups.str.startswith('__missing__::').sum():,}")
 
+if fold_id < 0 or fold_id >= n_folds:
+    raise ValueError(f"fold_id must be between 0 and {n_folds - 1}; got {fold_id}.")
+if groups.nunique() < n_folds:
+    raise ValueError(
+        f"GroupKFold needs at least n_folds unique groups; got {groups.nunique()} groups "
+        f"for n_folds={n_folds}."
+    )
+
 group_kfold = GroupKFold(n_splits=n_folds)
 
 splits = list(group_kfold.split(features, groups=groups))
 
-train_idx, val_idx = splits[0]
+train_idx, val_idx = splits[fold_id]
 
 train_dataset = _build_dataset(features, train_idx)
 val_dataset = _build_dataset(features, val_idx)
@@ -394,52 +417,7 @@ test_dataset = None
 
 show_split_info(train_dataset, val_dataset)
 
-
-# ## Build DataLoaders
-# 
-
-# In[11]:
-
-
-BATCH_SIZE = 256
-attribute = "species_group"
-
-train_loader = LoadData(
-    dataset=train_dataset, 
-    batch_size=BATCH_SIZE, 
-    shuffle=False, 
-    attribute=attribute
-)
-
-val_loader = LoadData(
-    dataset=val_dataset, 
-    batch_size=BATCH_SIZE, 
-    shuffle=False, 
-    attribute=attribute,
-    target_dataset=train_dataset
-)
-
-test_loader = None
-if test_dataset is not None:
-    test_loader = LoadData(
-        dataset=test_dataset, 
-        batch_size=BATCH_SIZE, 
-        shuffle=False, 
-        attribute=attribute,
-        target_dataset=train_dataset
-    )
-
-show_loader_info(attribute, train_loader, val_loader, test_loader, species_group_decoder)
-
-display_sampling_effect(train_dataset, train_loader, "species_group", species_group_decoder)
-
-
-# # Model and training
-# 
-
-# ## Build model
-
-# In[12]:
+# Model and training
 
 
 from src.models.attentive_fp import AttentiveFP
@@ -539,131 +517,132 @@ record_categories = ["species_group", "endpoint", "effect", "conc_unit"]
 BATCH_SIZE = globals().get("BATCH_SIZE", 256)
 attribute = globals().get("attribute", "species_group")
 
-USE_WANDB = wandb is not None  # set to False to skip tracking
-# USE_WANDB = False  # set to False to skip tracking
+USE_WANDB = wandb is not None and os.environ.get("USE_WANDB", "0").lower() in {"1", "true", "yes"}
 wandb_run = None
 
-for fold_id in range(n_folds):
+BATCH_SIZE = 256
+attribute = "species_group"
 
-    print("at fold {fold_id}")
+train_idx, val_idx = splits[fold_id]
 
-    train_idx, val_idx = splits[fold_id]
+train_dataset = _build_dataset(features, train_idx)
+val_dataset = _build_dataset(features, val_idx)
+test_dataset = None
 
-    train_dataset = _build_dataset(features, train_idx)
-    val_dataset = _build_dataset(features, val_idx)
-    test_dataset = None
+train_loader = LoadData(
+    dataset=train_dataset,
+    batch_size=BATCH_SIZE,
+    sampler_type="weighted",
+    attribute=attribute,
+)
 
-    train_loader = LoadData(
-        dataset=train_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        attribute=attribute,
+val_loader = LoadData(
+    dataset=val_dataset,
+    batch_size=BATCH_SIZE,
+    sampler_type="sequential"
+)
+
+test_loader = None
+
+model, meta_encoder, model_gnn, n_params_meta, n_params_gnn, n_params_total, gnn_name = build_model()
+loss_fn = torch.nn.SmoothL1Loss(beta=loss_beta)
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer,
+    mode="min",
+    patience=10,
+    factor=0.5,
+    min_lr=1e-6,
+)
+
+if USE_WANDB:
+    wandb_dir = PROJECT_ROOT / "outputs" / "wandb"
+    wandb_dir.mkdir(parents=True, exist_ok=True)
+    wandb_run = wandb.init(
+        project="gnn-thesis",
+        entity="elonvg-chalmers-university-of-technology",
+        dir=str(wandb_dir),
+        job_type="train",
+        group=f"{gnn_name}-groupkfold-{random_state}",   # same for all folds
+        name=f"100k-meanpool-fold-{fold_id}",               # unique per fold
+        tags=["notebook", gnn_name],
+        config={
+            "random_state": random_state,
+            "n_samples": MAX_ROWS,
+            "fold": fold_id,
+            "train_size": len(train_dataset),
+            "val_size": len(val_dataset),
+
+            "filters": filters,
+            "split_salt": SPLIT_SALTS,
+            "remove_lone": REMOVE_LONE,
+            "remove_metals": REMOVE_METALS,
+            "max_conc_value": MAX_CONC_VALUE,
+            "duration_fill_value": DURATION_FILL_VALUE,
+            "max_duration_hours": MAX_DURATION_HOURS,
+            "log_transform_duration": LOG_TRANSFORM_DURATION,
+
+            "num_atom_features": ATOM_FEATURE_DIM,
+            "num_bond_features": EDGE_FEATURE_DIM,
+
+            "tax_embedding": tax_embedding,
+            "use_pretrained_taxid": USE_PRETRAINED_TAXID,
+            "categorical_cols": categorical_cols,
+            "numerical_cols": numerical_cols,
+
+            # "split_method": split_method,
+            "butina_cluster_col": cluster_col,
+            # "stratify_by": stratify_by,
+            # "frac_train": frac_train,
+            # "frac_valid": frac_valid,
+            # "frac_test": frac_test,
+            # "target_mean": float(target_mean),
+            # "target_std": float(target_std),
+
+            "batch_size": BATCH_SIZE,
+            "taxonomy_encoder": TaxonomyOneHot.__name__,
+            "gnn_model": gnn_name,
+            "tax_dim": TAX_DIM,
+            "pretrained_tax_dim": PRETRAINED_TAX_DIM,
+            "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
+            "categorical_dim": CATEGORICAL_DIM,
+            "numeric_dim": NUMERIC_DIM,
+            "meta_dropout": META_DROPOUT,
+            "gnn_hidden_dim": GNN_HIDDEN_DIM,
+            "gnn_out_dim": GNN_OUT_DIM,
+            "gnn_pooling" : "mean",
+            "num_layers": NUM_LAYERS,
+            "num_timesteps": NUM_TIMESTEPS,
+            "dropout": DROPOUT,
+            "final_hidden_dim": FINAL_HIDDEN_DIM,
+            "n_params_meta": n_params_meta,
+            "n_params_gnn": n_params_gnn,
+            "n_params_total": n_params_total,
+            "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "loss": loss_fn.__class__.__name__,
+            "loss_beta": loss_beta,
+            "early_stopping_patience": early_stopping_patience,
+            "early_stopping_min_delta": early_stopping_min_delta,
+        },
     )
+    wandb_run.define_metric("epoch")
+    metric_prefixes = ["train/*", "val/*", "optimizer/*"]
+    if test_loader is not None:
+        metric_prefixes.append("test/*")
+    for metric_prefix in metric_prefixes:
+        wandb_run.define_metric(metric_prefix, step_metric="epoch")
+else:
+    print("wandb disabled or not installed; running without experiment tracking.")
 
-    val_loader = LoadData(
-        dataset=val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        attribute=attribute,
-        target_dataset=train_dataset,
-    )
+print("Training configuration")
+print(f"epochs = {epochs}")
+print(f"learning_rate = {learning_rate}")
+print(f"weight_decay = {weight_decay}")
+print(f"loss = {loss_fn.__class__.__name__}")
+print(f"early_stopping_patience = {early_stopping_patience}")
 
-    test_loader = None
-
-    model, meta_encoder, model_gnn, n_params_meta, n_params_gnn, n_params_total, gnn_name = build_model()
-    loss_fn = torch.nn.SmoothL1Loss(beta=loss_beta)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="min",
-        patience=10,
-        factor=0.5,
-        min_lr=1e-6,
-    )
-
-    if USE_WANDB:
-        wandb_run = wandb.init(
-            project="gnn-thesis",
-            entity="elonvg-chalmers-university-of-technology",
-            job_type="train",
-            group=f"{gnn_name}-groupkfold-{random_state}",   # same for all folds
-            name=f"100k-meanpool-fold-{fold_id}",               # unique per fold
-            tags=["notebook", gnn_name],
-            config={
-                "random_state": random_state,
-                "n_samples": MAX_ROWS,
-                "fold": fold_id,
-                "train_size": len(train_dataset),
-                "val_size": len(val_dataset),
-
-                "filters": filters,
-                "split_salt": SPLIT_SALTS,
-                "remove_lone": REMOVE_LONE,
-                "remove_metals": REMOVE_METALS,
-                "max_conc_value": MAX_CONC_VALUE,
-                "duration_fill_value": DURATION_FILL_VALUE,
-                "max_duration_hours": MAX_DURATION_HOURS,
-                "log_transform_duration": LOG_TRANSFORM_DURATION,
-
-                "num_atom_features": ATOM_FEATURE_DIM,
-                "num_bond_features": EDGE_FEATURE_DIM,
-
-                "tax_embedding": tax_embedding,
-                "use_pretrained_taxid": USE_PRETRAINED_TAXID,
-                "categorical_cols": categorical_cols,
-                "numerical_cols": numerical_cols,
-
-                # "split_method": split_method,
-                "butina_cluster_col": cluster_col,
-                # "stratify_by": stratify_by,
-                # "frac_train": frac_train,
-                # "frac_valid": frac_valid,
-                # "frac_test": frac_test,
-                # "target_mean": float(target_mean),
-                # "target_std": float(target_std),
-
-                "batch_size": BATCH_SIZE,
-                "taxonomy_encoder": TaxonomyOneHot.__name__,
-                "gnn_model": gnn_name,
-                "tax_dim": TAX_DIM,
-                "pretrained_tax_dim": PRETRAINED_TAX_DIM,
-                "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
-                "categorical_dim": CATEGORICAL_DIM,
-                "numeric_dim": NUMERIC_DIM,
-                "meta_dropout": META_DROPOUT,
-                "gnn_hidden_dim": GNN_HIDDEN_DIM,
-                "gnn_out_dim": GNN_OUT_DIM,
-                "num_layers": NUM_LAYERS,
-                "num_timesteps": NUM_TIMESTEPS,
-                "dropout": DROPOUT,
-                "final_hidden_dim": FINAL_HIDDEN_DIM,
-                "n_params_meta": n_params_meta,
-                "n_params_gnn": n_params_gnn,
-                "n_params_total": n_params_total,
-                "learning_rate": learning_rate,
-                "weight_decay": weight_decay,
-                "loss": loss_fn.__class__.__name__,
-                "loss_beta": loss_beta,
-                "early_stopping_patience": early_stopping_patience,
-                "early_stopping_min_delta": early_stopping_min_delta,
-            },
-        )
-        wandb_run.define_metric("epoch")
-        metric_prefixes = ["train/*", "val/*", "optimizer/*"]
-        if test_loader is not None:
-            metric_prefixes.append("test/*")
-        for metric_prefix in metric_prefixes:
-            wandb_run.define_metric(metric_prefix, step_metric="epoch")
-    else:
-        print("wandb not installed; running without experiment tracking.")
-
-    print("Training configuration")
-    print(f"epochs = {epochs}")
-    print(f"learning_rate = {learning_rate}")
-    print(f"weight_decay = {weight_decay}")
-    print(f"loss = {loss_fn.__class__.__name__}")
-    print(f"early_stopping_patience = {early_stopping_patience}")
-
+try:
     model_trained, history = train(
         model,
         train_loader,
@@ -676,176 +655,14 @@ for fold_id in range(n_folds):
         device=device,
         early_stopping_patience=early_stopping_patience,
         early_stopping_min_delta=early_stopping_min_delta,
-        record_categories=categorical_cols,
+        record_categories=record_categories,
         record_joint_categories=("endpoint", "species_group"),
         label_encoder=categorical_encoder,
         run=wandb_run,
     )
-
-    model = model_trained
-
+finally:
     if wandb_run is not None:
         wandb_run.finish()
         wandb_run = None
 
-# plot_training(history["history_all"])
-
-# plot_training_metrics(history["history_all"])
-
-
-# ### Wandb finish
-
-# In[15]:
-
-
-if wandb_run is not None:
-    wandb_run.finish()
-
-
-# # Results
-
-# ## Check Overall Evaluation Performance
-
-# In[ ]:
-
-
-from src.training.loops import predict_df
-from src.visualization.result_plots import summarize_by_group, plot_group_mae
-
-analysis_df = df_processed.reset_index(drop=True)[[
-    "species_group",
-    "species_latin_name",
-    "endpoint",
-    "effect",
-    "fragment_count",
-    "has_metal",
-    "is_single_node",
-    "is_salt",
-    "conc_unit"
-]].copy()
-
-analysis_df["fragment_bin"] = pd.cut(analysis_df["fragment_count"], [-1, 1, 2, np.inf], labels=["1", "2", "3+"])
-analysis_df["has_metal_group"] = analysis_df["has_metal"].map({0.0: "No metal", 1.0: "Has metal"})
-analysis_df["is_single_group"] = analysis_df["is_single_node"].map({0.0: "Not single-node", 1.0: "Single-node"})
-analysis_df["is_salt"] = analysis_df["is_salt"].map({0.0: "Not salt", 1.0: "Is salt"})
-
-eval_loader = test_loader if test_loader is not None else val_loader
-eval_name = "test" if test_loader is not None else "val"
-
-results_df = predict_df(model, eval_loader, device, cols=["row_id", "smiles", "taxid_raw"])
-results_df["row_id"] = results_df["row_id"].astype(int)
-results_df["taxid"] = results_df["taxid_raw"].astype(int)
-results_df = results_df.drop(columns="taxid_raw").join(analysis_df, on="row_id")
-
-results_df["pred_log10c"] = results_df["pred_norm"] # * target_std + target_mean
-results_df["actual_log10c"] = results_df["actual_norm"] # * target_std + target_mean
-results_df["residual_log10c"] = results_df["pred_log10c"] - results_df["actual_log10c"]
-results_df["abs_error_log10c"] = results_df["residual_log10c"].abs()
-results_df["pred_conc"] = 10 ** results_df["pred_log10c"]
-results_df["actual_conc"] = 10 ** results_df["actual_log10c"]
-results_df["fold_error"] = np.maximum(
-    results_df["pred_conc"] / results_df["actual_conc"],
-    results_df["actual_conc"] / results_df["pred_conc"],
-)
-
-train_df = analysis_df.iloc[[g.row_id.item() for g in train_dataset]].copy()
-
-summary_metrics = {
-    "r2_norm": r2_score(results_df["actual_norm"], results_df["pred_norm"]),
-    "r2_log10c": r2_score(results_df["actual_log10c"], results_df["pred_log10c"]),
-    "rmse_log10c": mean_squared_error(results_df["actual_log10c"], results_df["pred_log10c"]) ** 0.5,
-    "mae_log10c": mean_absolute_error(results_df["actual_log10c"], results_df["pred_log10c"]),
-    "median_fold_error": results_df["fold_error"].median(),
-}
-
-print(f"Overall {eval_name}-set metrics")
-print(f"R^2 (normalized target): {summary_metrics['r2_norm']:.3f}")
-print(f"R^2 (log10c): {summary_metrics['r2_log10c']:.3f}")
-print(f"RMSE (log10c): {summary_metrics['rmse_log10c']:.3f}")
-print(f"MAE (log10c): {summary_metrics['mae_log10c']:.3f}")
-print(f"Median fold error (conc scale): {summary_metrics['median_fold_error']:.3f}")
-
-largest_errors = results_df[[
-    "species_latin_name",
-    "species_group",
-    "endpoint",
-    "effect",
-    "actual_log10c",
-    "pred_log10c",
-    "abs_error_log10c",
-    "fold_error",
-    "smiles",
-]].sort_values("abs_error_log10c", ascending=False).head(10)
-
-largest_errors
-
-
-# ## Visual Result Checks
-
-# In[14]:
-
-
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-axes[0].scatter(results_df["actual_log10c"], results_df["pred_log10c"], alpha=0.25)
-plot_min = min(results_df["actual_log10c"].min(), results_df["pred_log10c"].min())
-plot_max = max(results_df["actual_log10c"].max(), results_df["pred_log10c"].max())
-axes[0].plot([plot_min, plot_max], [plot_min, plot_max], "r--")
-axes[0].set_xlabel("Actual log10c")
-axes[0].set_ylabel("Predicted log10c")
-axes[0].set_title("Prediction vs actual")
-
-axes[1].hist(results_df["residual_log10c"], bins=40, alpha=0.85)
-axes[1].axvline(0, color="r", linestyle="--")
-axes[1].set_xlabel("Residual (pred - actual)")
-axes[1].set_ylabel("Count")
-axes[1].set_title("Residual distribution")
-
-plt.tight_layout()
-plt.show()
-
-
-# ## Performance By Group
-
-# In[18]:
-
-
-group_cols = [
-    "conc_unit",
-    "species_group",
-    "endpoint",
-    "effect",
-    "fragment_bin",
-    "has_metal_group",
-]
-
-# train_df["actual_log10c"] = [g.y.item() * target_std + target_mean for g in train_dataset]
-train_df["actual_log10c"] = [g.y.item() for g in train_dataset]
-
-group_summaries = {}
-
-for category in categorical_cols:
-
-    print(category)
-
-    plot_group_training(
-        history,
-        record_categories=[category],
-        metric="loss",   # or "mae" / "rmse"
-        top_n=4,
-        label_encoder=categorical_encoder,
-    )
-    
-    summary = summarize_by_group(results_df, train_df, category, min_count=25)
-
-    plot_group_mae(
-        summary, 
-        category=category,
-    )
-
-
-# In[ ]:
-
-
-
-
+model = model_trained

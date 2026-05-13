@@ -28,16 +28,18 @@ def test_evaluate_by_groups_returns_group_metrics():
     model = IdentityRegressionModel()
     loss_fn = nn.MSELoss()
 
-    avg_loss, rmse, mae, group_metrics = evaluate_by_groups(
+    avg_loss, rmse, mean_ae, median_ae, group_metrics = evaluate_by_groups(
         model, loader, loss_fn, device="cpu", group_cols=["species_group"]
     )
 
     assert avg_loss == 0.0
     assert rmse == 0.0
-    assert mae == 0.0
+    assert mean_ae == 0.0
+    assert median_ae == 0.0
     assert "species_group" in group_metrics
     assert group_metrics["species_group"]["fish"]["loss"] == 0.0
-    assert group_metrics["species_group"]["algae"]["mae"] == 0.0
+    assert group_metrics["species_group"]["algae"]["mean_ae"] == 0.0
+    assert group_metrics["species_group"]["algae"]["median_ae"] == 0.0
 
 
 def test_train_records_group_history_for_record_categories():
