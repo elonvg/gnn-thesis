@@ -139,25 +139,28 @@ def preprocess(
     log_transform_duration=False,
     keep_duration_raw=False,
 ):
-    if split_salts:
-        df["SMILES"] = df["SMILES"].apply(salt_remover)
+    df = df.copy()
 
-    if remove_lone:
-        is_single_node_mask = df["SMILES"].apply(is_single_node)
-        df = df[~is_single_node_mask].reset_index(drop=True)
+    # Molecule cleanup
+    df = preprocess_smiles(df, split_salts=split_salts)
 
-    if remove_metals:
-        df = df[~df["SMILES"].apply(has_metal)].reset_index(drop=True)
-
-    df = preprocess_conc(
+    # Mask data
+    mask = mask_data(
         df,
-        max_conc=max_conc_value
+        remove_lone=remove_lone,
+        remove_metals=remove_metals,
+        max_conc_value=max_conc_value,
+        max_duration_hours=max_duration_hours,
+        print_summary=False,
     )
+    df = df.loc[mask].reset_index(drop=True)
+
+    # Numeric target and duration transforms
+    df = preprocess_conc(df)
 
     df = preprocess_duration(
         df,
         fill_value=duration_fill_value,
-        max_hours=max_duration_hours,
         log_transform=log_transform_duration,
         keep_raw=keep_duration_raw,
     )
@@ -165,17 +168,17 @@ def preprocess(
     return df
 
 
-def preprocess_conc(df, max_conc):
+def preprocess_smiles(df, split_salts=False):
+    if split_salts:
+        df["SMILES"] = df["SMILES"].apply(salt_remover)
+    return df
 
+
+def preprocess_conc(df):
     if "conc" not in df.columns:
         return df
 
     conc = pd.to_numeric(df["conc"], errors="coerce")
-
-    if max_conc is not None:
-        keep_mask = conc.isna() | conc.le(max_conc)
-        df = df.loc[keep_mask].reset_index(drop=True)
-        conc = conc.loc[keep_mask].reset_index(drop=True)
 
     df["conc"] = conc
     df["log10c"] = np.log10(df["conc"])
@@ -185,7 +188,6 @@ def preprocess_conc(df, max_conc):
 def preprocess_duration(
     df,
     fill_value=None,
-    max_hours=None,
     log_transform=False,
     keep_raw=False,
 ):
@@ -200,11 +202,6 @@ def preprocess_duration(
     # Non-positive durations are treated as missing before imputation so the
     # later log10 transform always receives positive values.
     duration = duration.where(duration > 0)
-
-    if max_hours is not None:
-        keep_mask = duration.isna() | duration.le(max_hours)
-        df = df.loc[keep_mask].reset_index(drop=True)
-        duration = duration.loc[keep_mask].reset_index(drop=True)
 
     if fill_value is not None:
         duration = duration.fillna(fill_value)
@@ -222,41 +219,171 @@ def mask_data(
     df,
     filters=None,
     require_duration=False,
-    require_taxonomy=False,
-    taxonomy_columns=None,
+    require_taxid=False,
+    remove_lone=False,
+    remove_metals=False,
+    max_conc_value=None,
+    max_duration_hours=None,
+    print_summary=True,
 ):
     filters = filters or {}
-    mask = (
-        df["conc"].gt(0)
-        & df["SMILES"].notna()
-    )
+    mask = df["SMILES"].notna()
 
-    print("Filters")
+    if print_summary:
+        print("Filters")
+
+    def add_mask(label, step_mask):
+        nonlocal mask
+        mask &= step_mask
+        if print_summary:
+            vc = step_mask.value_counts(normalize=True)
+            print(f"{label}\nTrue: {vc.get(True, 0):.3f}")
+
+    if "conc" in df.columns:
+        conc = pd.to_numeric(df["conc"], errors="coerce")
+        conc_mask = conc.gt(0)
+        if max_conc_value is not None:
+            conc_mask &= conc.le(max_conc_value)
+
+        label = "conc > 0"
+        if max_conc_value is not None:
+            label = f"{label} and <= {max_conc_value}"
+        add_mask(label, conc_mask)
+
     for col, values in filters.items():
         if col in df.columns:
             col_mask = df[col].isin(values)
-            mask &= col_mask
-            vc = col_mask.value_counts(normalize=True)
-            print(f"{col}: {values}\nTrue: {vc.get(True, 0):.3f}")
+            add_mask(f"{col}: {values}", col_mask)
 
     if require_duration:
         if "duration" not in df.columns:
             raise KeyError("'duration' column is required when require_duration=True")
         duration_mask = df["duration"].notna()
-        mask &= duration_mask
-        vc = duration_mask.value_counts(normalize=True)
-        print(f"require_duration: {require_duration}\nTrue: {vc.get(True, 0):.3f}")
+        add_mask(f"require_duration: {require_duration}", duration_mask)
 
-    if require_taxonomy:
-        missing_taxonomy_columns = [col for col in taxonomy_columns if col not in df.columns]
-        if missing_taxonomy_columns:
-            raise KeyError(
-                "Missing taxonomy columns required for require_taxonomy=True: "
-                f"{missing_taxonomy_columns}"
-            )
-        taxonomy_mask = df[list(taxonomy_columns)].notna().all(axis=1)
-        mask &= taxonomy_mask
-        vc = taxonomy_mask.value_counts(normalize=True)
-        print(f"require_taxonomy: {require_taxonomy}\nTrue: {vc.get(True, 0):.3f}")
+    if require_taxid:
+        if "taxid" not in df.columns:
+            raise KeyError("'taxid' column is required when require_taxid=True")
+        taxid_mask = df["taxid"].notna()
+        add_mask(f"require_taxid: {require_taxid}", taxid_mask)
+
+    if max_duration_hours is not None and "duration" in df.columns:
+        duration = pd.to_numeric(df["duration"], errors="coerce")
+        duration_for_filter = duration.where(duration > 0)
+        duration_mask = duration_for_filter.isna() | duration_for_filter.le(max_duration_hours)
+        add_mask(f"duration <= {max_duration_hours} h or missing", duration_mask)
+
+    if remove_lone:
+        non_single_node_mask = ~df["SMILES"].apply(is_single_node)
+        add_mask(f"remove_lone: {remove_lone}", non_single_node_mask)
+
+    if remove_metals:
+        non_metal_mask = ~df["SMILES"].apply(has_metal)
+        add_mask(f"remove_metals: {remove_metals}", non_metal_mask)
 
     return mask
+
+
+def rename_columns(df, rename_map=None, int_cols=None):
+    df = df.copy()
+
+    if rename_map is None:
+        rename_map = {
+            "species_group_corrected": "species_group",
+            "organism_lifestage_categorized": "organism_lifestage",
+            "administration_route_categorized": "administration_route",
+            "NCBI_rank_superkingdom": "superkingdom",
+            "NCBI_rank_kingdom": "kingdom",
+            "NCBI_rank_phylum": "phylum",
+            "NCBI_rank_subphylum": "subphylum",
+            "NCBI_rank_class": "class",
+            "NCBI_rank_order": "order",
+            "NCBI_rank_family": "family",
+            "NCBI_rank_genus": "genus",
+            "NCBI_rank_species": "species",
+            "NCBI_sci_name": "species_sci_name",
+            "NCBI_last_known_rank": "taxid",
+        }
+    df = df.rename(columns=rename_map)
+
+    if int_cols is None:
+        int_cols = ["taxid"]
+
+    existing_int_cols = [col for col in int_cols if col in df.columns]
+
+    for col in existing_int_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+
+    return df
+
+
+def fill_training_defaults(df):
+    df = df.copy()
+    df["organism_lifestage"] = df["organism_lifestage"].fillna("adult")
+    df["administration_route"] = df["administration_route"].fillna("fill")
+    df["duration_unit"] = df["duration_unit"].fillna("h")
+    return df
+
+
+def sample_rows(df, n_samples, random_state):
+    if n_samples is not None and len(df) > n_samples:
+        return df.sample(n=n_samples, random_state=random_state).reset_index(drop=True)
+    return df.reset_index(drop=True)
+
+
+def process_data(
+    df,
+    n_samples,
+    random_state,
+    filters,
+    require_duration,
+    require_taxid,
+    split_salts,
+    remove_lone,
+    remove_metals,
+    max_conc_value,
+    duration_fill_value,
+    max_duration_hours,
+    log_transform_duration,
+    keep_duration_raw,
+):
+    # 1. Rename columns and fill defaults used by the training notebook.
+    df = rename_columns(df, int_cols=["taxid"])
+    df = fill_training_defaults(df)
+
+    # 2. Normalize SMILES before molecule-based filters are evaluated.
+    df = preprocess_smiles(df, split_salts=split_salts)
+
+    # 3. Build and apply every row-level filter in one place.
+    mask = mask_data(
+        df,
+        filters=filters,
+        require_duration=require_duration,
+        require_taxid=require_taxid,
+        remove_lone=remove_lone,
+        remove_metals=remove_metals,
+        max_conc_value=max_conc_value,
+        max_duration_hours=max_duration_hours,
+    )
+    df_masked = df.loc[mask].reset_index(drop=True)
+
+    print()
+    print("Loaded and masked training data")
+    print(f"Rows in full data: {len(df):,}")
+    print(f"Rows after mask: {len(df_masked):,}")
+
+    # 4. Convert the kept rows into model-ready numeric/log features.
+    df_processed = preprocess(
+        df_masked.copy(),
+        split_salts=False,
+        duration_fill_value=duration_fill_value,
+        log_transform_duration=log_transform_duration,
+        keep_duration_raw=keep_duration_raw,
+    )
+
+    print(f"Rows before preprocessing: {len(df_masked):,}")
+    print(f"Rows after preprocessing:  {len(df_processed):,}")
+    print(f"Rows removed: {len(df_masked) - len(df_processed):,}")
+
+    # 5. Optionally limit rows for faster notebook experiments.
+    return sample_rows(df_processed, n_samples, random_state)
