@@ -7,6 +7,8 @@
 # Argparse
 import argparse
 
+from src.models.gin import GIN
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--fold", type=int, default=0)
 args = parser.parse_args()
@@ -27,6 +29,8 @@ N_SAMPLES = 1000
 # N_SAMPLES = None
 random_state = 11
 
+BATCH_SIZE = 1024
+
 FILTERS = {
     "duration_unit": ["h"],
     "effect": ["MOR", "POP", "GRO", "BEH", "REP", "ITX", "PHY", "DVP", "MPH"],
@@ -46,8 +50,8 @@ MAX_DURATION_HOURS = 9000.0
 # In[2]:
 
 
-get_ipython().run_line_magic('load_ext', 'autoreload')
-get_ipython().run_line_magic('autoreload', '2')
+# get_ipython().run_line_magic('load_ext', 'autoreload')
+# get_ipython().run_line_magic('autoreload', '2')
 
 from pathlib import Path
 import sys
@@ -285,7 +289,6 @@ show_split_info(train_dataset, val_dataset)
 # In[8]:
 
 
-BATCH_SIZE = 256
 attribute = "species_group"
 
 train_loader = LoadData(
@@ -377,12 +380,12 @@ def build_model():
     #     dropout=DROPOUT,
     # ).to(device)
 
-    model_gnn = GCN(
-        mol_dim=ATOM_FEATURE_DIM, 
-        edge_dim=EDGE_FEATURE_DIM,
-        hidden_dim=GNN_HIDDEN_DIM,
-        output_dim=GNN_OUT_DIM
-    )
+    model_gnn = GIN(            
+            mol_dim=ATOM_FEATURE_DIM,
+            edge_dim=EDGE_FEATURE_DIM,
+            num_layers=3,
+            hidden_dim=GNN_HIDDEN_DIM,
+            output_dim=GNN_OUT_DIM)
 
     # model_gnn = None
 
