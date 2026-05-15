@@ -317,14 +317,6 @@ def rename_columns(df, rename_map=None, int_cols=None):
     return df
 
 
-def fill_training_defaults(df):
-    df = df.copy()
-    df["organism_lifestage"] = df["organism_lifestage"].fillna("adult")
-    df["administration_route"] = df["administration_route"].fillna("fill")
-    df["duration_unit"] = df["duration_unit"].fillna("h")
-    return df
-
-
 def sample_rows(df, n_samples, random_state):
     if n_samples is not None and len(df) > n_samples:
         return df.sample(n=n_samples, random_state=random_state).reset_index(drop=True)
@@ -347,14 +339,18 @@ def process_data(
     log_transform_duration,
     keep_duration_raw,
 ):
-    # 1. Rename columns and fill defaults used by the training notebook.
-    df = rename_columns(df, int_cols=["taxid"])
-    df = fill_training_defaults(df)
+    df = df.copy()
 
-    # 2. Normalize SMILES before molecule-based filters are evaluated.
+    # Rename columns and fill missing values
+    df = rename_columns(df, int_cols=["taxid"])
+    df["organism_lifestage"] = df["organism_lifestage"].fillna("adult")
+    df["administration_route"] = df["administration_route"].fillna("fill")
+    df["duration_unit"] = df["duration_unit"].fillna("h")
+
+    # Normalize SMILES
     df = preprocess_smiles(df, split_salts=split_salts)
 
-    # 3. Build and apply every row-level filter in one place.
+    # Mask data based on filters and criteria, then reset index for the remaining rows.
     mask = mask_data(
         df,
         filters=filters,
@@ -372,7 +368,7 @@ def process_data(
     print(f"Rows in full data: {len(df):,}")
     print(f"Rows after mask: {len(df_masked):,}")
 
-    # 4. Convert the kept rows into model-ready numeric/log features.
+    # Process remaining data
     df_processed = preprocess(
         df_masked.copy(),
         split_salts=False,
@@ -385,5 +381,16 @@ def process_data(
     print(f"Rows after preprocessing:  {len(df_processed):,}")
     print(f"Rows removed: {len(df_masked) - len(df_processed):,}")
 
-    # 5. Optionally limit rows for faster notebook experiments.
-    return sample_rows(df_processed, n_samples, random_state)
+    # Add some metadata cols
+    df_processed["fragment_count"] = df_processed["SMILES"].apply(fragment_count).astype(float)
+    df_processed["is_salt"] = df_processed["SMILES"].apply(is_salt).astype(float)
+    df_processed["has_metal"] = df_processed["SMILES"].apply(has_metal).astype(float)
+    df_processed["is_single_node"] = df_processed["SMILES"].apply(is_single_node).astype(float)
+    
+    # Sample subset for quicker experiments
+    if n_samples is not None and len(df_processed) > n_samples:
+        df_processed = df_processed.sample(n=n_samples, random_state=random_state).reset_index(drop=True)
+    else:
+        df_processed = df_processed.reset_index(drop=True)
+    
+    return df_processed
