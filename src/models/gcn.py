@@ -15,14 +15,15 @@ class GCN(nn.Module):
         self.out_dim = output_dim
         self.output_dim = output_dim
 
-        # self.atom_encoder = nn.Embedding(120, 32) # Assuming atomic numbers up to 120 -> embed to 32-dim vectors
-
         # GCNConv does not accept edge features!!!
         self.conv1 = GCNConv(mol_dim, hidden_dim)
         self.conv2 = GCNConv(hidden_dim, hidden_dim)
         self.conv3 = GCNConv(hidden_dim, hidden_dim)
+        self.conv4 = GCNConv(hidden_dim, hidden_dim)
+        self.conv5 = GCNConv(hidden_dim, hidden_dim)
 
         self.lin1 = nn.Linear(2 * hidden_dim, output_dim)
+
         
 
     def forward(self, data):
@@ -31,6 +32,8 @@ class GCN(nn.Module):
         x = self.conv1(x, edge_index).relu()
         x = self.conv2(x, edge_index).relu()
         x = self.conv3(x, edge_index).relu()
+        x = self.conv4(x, edge_index).relu()
+        x = self.conv5(x, edge_index).relu()
         # shape: n_atoms x hidden_dim
 
         # Mean and max pooling
