@@ -12,7 +12,6 @@ class GCN(nn.Module):
             ):
         super().__init__()
 
-        self.out_dim = output_dim
         self.output_dim = output_dim
 
         # GCNConv does not accept edge features!!!
