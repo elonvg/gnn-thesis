@@ -45,6 +45,8 @@ class ToxicityModel(nn.Module):
             # nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
             nn.Dropout(0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
 
