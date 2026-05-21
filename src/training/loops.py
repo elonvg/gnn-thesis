@@ -12,29 +12,70 @@ from .metrics import regression_metrics
 
 
 def predict_df(model, loader, device, cols=None):
-    frames = []
+    return _collect_eval_outputs(model, loader, None, device, cols=cols)["results_df"]
+
+
+def _as_batch_values(value, batch_size):
+    if torch.is_tensor(value):
+        return value.detach().cpu().view(-1).tolist()
+
+    if hasattr(value, "tolist") and not isinstance(value, (str, bytes)):
+        value = value.tolist()
+
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        value = [value]
+
+    if len(value) != batch_size:
+        raise ValueError(
+            f"Expected {batch_size} values for a batched attribute, got {len(value)}."
+        )
+
+    return list(value)
+
+
+def _collect_eval_outputs(model, loader, loss_fn, device, cols=None):
     model.eval()
+    cols = list(dict.fromkeys(cols or []))
+    total_loss = 0
+    predictions, targets = [], []
+    column_values = {col: [] for col in cols}
 
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
-            frame = pd.DataFrame(
-                {
-                    "pred_norm": model(batch).view(-1).cpu().numpy(),
-                    "actual_norm": batch.y.view(-1).cpu().numpy(),
-                }
-            )
+            out = model(batch).view(-1)
+            target = batch.y.view(-1)
 
-            for col in cols or []:
-                value = getattr(batch, col)
-                if torch.is_tensor(value):
-                    frame[col] = value.view(-1).cpu().numpy()
-                else:
-                    frame[col] = list(value)
+            if loss_fn is not None:
+                total_loss += loss_fn(out, target).item()
 
-            frames.append(frame)
+            batch_size = out.numel()
+            predictions.append(out.detach().cpu())
+            targets.append(target.detach().cpu())
 
-    return pd.concat(frames, ignore_index=True)
+            for col in cols:
+                column_values[col].extend(_as_batch_values(getattr(batch, col), batch_size))
+
+    predictions = torch.cat(predictions)
+    targets = torch.cat(targets)
+
+    results = {
+        "predictions": predictions,
+        "targets": targets,
+        "results_df": pd.DataFrame(
+            {
+                "pred_norm": predictions.numpy(),
+                "actual_norm": targets.numpy(),
+                **column_values,
+            }
+        ),
+    }
+
+    if loss_fn is not None:
+        results["avg_loss"] = total_loss / len(loader)
+        results["metrics"] = (results["avg_loss"], *regression_metrics(predictions, targets))
+
+    return results
 
 
 def train_epoch(model, loader, optimizer, loss_fn, device):
@@ -43,10 +84,10 @@ def train_epoch(model, loader, optimizer, loss_fn, device):
 
     for batch in loader:
         batch = batch.to(device)
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
-        out = model(batch).squeeze()
-        loss = loss_fn(out, batch.y)
+        out = model(batch).view(-1)
+        loss = loss_fn(out, batch.y.view(-1))
         loss.backward()
         optimizer.step()
 
@@ -56,26 +97,7 @@ def train_epoch(model, loader, optimizer, loss_fn, device):
 
 
 def evaluate(model, loader, loss_fn, device):
-    model.eval()
-    total_loss = 0
-    predictions, targets = [], []
-
-    with torch.no_grad():
-        for batch in loader:
-            batch = batch.to(device)
-            out = model(batch).squeeze()
-            loss = loss_fn(out, batch.y)
-            total_loss += loss.item()
-
-            predictions.append(out.cpu())
-            targets.append(batch.y.cpu())
-
-    avg_loss = total_loss / len(loader)
-    predictions = torch.cat(predictions)
-    targets = torch.cat(targets)
-    rmse, mean_ae, median_ae = regression_metrics(predictions, targets)
-
-    return avg_loss, rmse, mean_ae, median_ae
+    return _collect_eval_outputs(model, loader, loss_fn, device)["metrics"]
 
 
 def _group_metrics_from_dataframe(df, group_cols, loss_fn):
@@ -105,9 +127,14 @@ def _group_metrics_from_dataframe(df, group_cols, loss_fn):
 
 
 def evaluate_by_groups(model, loader, loss_fn, device, group_cols):
-    results_df = predict_df(model, loader, device, cols=group_cols)
-    avg_loss, rmse, mean_ae, median_ae = evaluate(model, loader, loss_fn, device)
-    return avg_loss, rmse, mean_ae, median_ae, _group_metrics_from_dataframe(results_df, group_cols, loss_fn)
+    eval_outputs = _evaluate_with_recorded_groups(
+        model,
+        loader,
+        loss_fn,
+        device,
+        record_categories=group_cols,
+    )
+    return (*eval_outputs["metrics"], eval_outputs["group_metrics"])
 
 
 def add_joint_metrics_to_history(history, joint_metrics, main_category, sub_category, prefix=None):
@@ -146,10 +173,31 @@ def evaluate_by_joint_group(
     if main_category == sub_category:
         raise ValueError("main_category and sub_category must be different columns.")
 
-    results_df = predict_df(model, loader, device, cols=[main_category, sub_category])
+    results_df = _collect_eval_outputs(
+        model,
+        loader,
+        None,
+        device,
+        cols=[main_category, sub_category],
+    )["results_df"]
+    joint_metrics = _joint_metrics_from_dataframe(results_df, main_category, sub_category, loss_fn)
+
+    if history is not None:
+        add_joint_metrics_to_history(
+            history,
+            joint_metrics,
+            main_category,
+            sub_category,
+            prefix=prefix,
+        )
+
+    return joint_metrics
+
+
+def _joint_metrics_from_dataframe(df, main_category, sub_category, loss_fn):
     joint_metrics = {}
 
-    for (main_value, sub_value), group_df in results_df.groupby(
+    for (main_value, sub_value), group_df in df.groupby(
         [main_category, sub_category], dropna=False
     ):
         predictions = torch.tensor(group_df["pred_norm"].values, dtype=torch.float32)
@@ -167,16 +215,54 @@ def evaluate_by_joint_group(
             "n": int(len(group_df)),
         }
 
-    if history is not None:
-        add_joint_metrics_to_history(
-            history,
-            joint_metrics,
+    return joint_metrics
+
+
+def _evaluation_columns(record_categories=None, record_joint_categories=None):
+    columns = []
+    if record_categories is not None:
+        columns.extend(record_categories)
+    if record_joint_categories is not None:
+        columns.extend(record_joint_categories)
+    return list(dict.fromkeys(columns))
+
+
+def _evaluate_with_recorded_groups(
+    model,
+    loader,
+    loss_fn,
+    device,
+    record_categories=None,
+    record_joint_categories=None,
+):
+    eval_outputs = _collect_eval_outputs(
+        model,
+        loader,
+        loss_fn,
+        device,
+        cols=_evaluation_columns(record_categories, record_joint_categories),
+    )
+    results_df = eval_outputs["results_df"]
+    group_metrics = (
+        _group_metrics_from_dataframe(results_df, record_categories, loss_fn)
+        if record_categories is not None
+        else None
+    )
+    joint_metrics = None
+    if record_joint_categories is not None:
+        main_category, sub_category = record_joint_categories
+        joint_metrics = _joint_metrics_from_dataframe(
+            results_df,
             main_category,
             sub_category,
-            prefix=prefix,
+            loss_fn,
         )
 
-    return joint_metrics
+    return {
+        "metrics": eval_outputs["metrics"],
+        "group_metrics": group_metrics,
+        "joint_metrics": joint_metrics,
+    }
 
 def build_label_decoders(label_encoder):
     if label_encoder is None:
@@ -503,30 +589,55 @@ def train(
             history["history_all"]["train_loss"].append(train_loss)
 
             train_group_metrics = None
-            if record_categories is not None:
-                _, _, _, _, train_group_metrics = evaluate_by_groups(
-                    model, train_loader, loss_fn, device, record_categories
+            train_joint_metrics = None
+            record_detailed_metrics = record_categories is not None or record_joint_categories is not None
+            if record_detailed_metrics:
+                train_eval_outputs = _evaluate_with_recorded_groups(
+                    model,
+                    train_loader,
+                    loss_fn,
+                    device,
+                    record_categories=record_categories,
+                    record_joint_categories=record_joint_categories,
                 )
+                train_group_metrics = train_eval_outputs["group_metrics"]
+                train_joint_metrics = train_eval_outputs["joint_metrics"]
 
             val_metrics = None
             val_group_metrics = None
+            val_joint_metrics = None
             if val_loader is not None:
-                if record_categories is not None:
-                    val_loss, val_rmse, val_mean_ae, val_median_ae, val_group_metrics = evaluate_by_groups(
-                        model, val_loader, loss_fn, device, record_categories
+                if record_detailed_metrics:
+                    val_eval_outputs = _evaluate_with_recorded_groups(
+                        model,
+                        val_loader,
+                        loss_fn,
+                        device,
+                        record_categories=record_categories,
+                        record_joint_categories=record_joint_categories,
                     )
-                    val_metrics = (val_loss, val_rmse, val_mean_ae, val_median_ae)
+                    val_metrics = val_eval_outputs["metrics"]
+                    val_group_metrics = val_eval_outputs["group_metrics"]
+                    val_joint_metrics = val_eval_outputs["joint_metrics"]
                 else:
                     val_metrics = evaluate(model, val_loader, loss_fn, device)
 
             test_metrics = None
             test_group_metrics = None
+            test_joint_metrics = None
             if test_loader is not None:
-                if record_categories is not None:
-                    test_loss, test_rmse, test_mean_ae, test_median_ae, test_group_metrics = evaluate_by_groups(
-                        model, test_loader, loss_fn, device, record_categories
+                if record_detailed_metrics:
+                    test_eval_outputs = _evaluate_with_recorded_groups(
+                        model,
+                        test_loader,
+                        loss_fn,
+                        device,
+                        record_categories=record_categories,
+                        record_joint_categories=record_joint_categories,
                     )
-                    test_metrics = (test_loss, test_rmse, test_mean_ae, test_median_ae)
+                    test_metrics = test_eval_outputs["metrics"]
+                    test_group_metrics = test_eval_outputs["group_metrics"]
+                    test_joint_metrics = test_eval_outputs["joint_metrics"]
                 else:
                     test_metrics = evaluate(model, test_loader, loss_fn, device)
 
@@ -565,36 +676,28 @@ def train(
 
             if record_joint_categories is not None:
                 main_category, sub_category = record_joint_categories
-                evaluate_by_joint_group(
-                    model,
-                    train_loader,
-                    loss_fn,
-                    device,
-                    main_category,
-                    sub_category,
-                    history=history,
-                    prefix="train",
-                )
-                if val_loader is not None:
-                    evaluate_by_joint_group(
-                        model,
-                        val_loader,
-                        loss_fn,
-                        device,
+                if train_joint_metrics is not None:
+                    add_joint_metrics_to_history(
+                        history,
+                        train_joint_metrics,
                         main_category,
                         sub_category,
-                        history=history,
+                        prefix="train",
+                    )
+                if val_joint_metrics is not None:
+                    add_joint_metrics_to_history(
+                        history,
+                        val_joint_metrics,
+                        main_category,
+                        sub_category,
                         prefix="val",
                     )
-                if test_loader is not None:
-                    evaluate_by_joint_group(
-                        model,
-                        test_loader,
-                        loss_fn,
-                        device,
+                if test_joint_metrics is not None:
+                    add_joint_metrics_to_history(
+                        history,
+                        test_joint_metrics,
                         main_category,
                         sub_category,
-                        history=history,
                         prefix="test",
                     )
 
