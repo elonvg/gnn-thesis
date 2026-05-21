@@ -234,9 +234,10 @@ class FragComboPNA(nn.Module):
         atom_to_frag, frag_to_mol = make_global_fragment_ids(batch=batch, fragment_id=fragment_id)
 
         num_frags = int(atom_to_frag.max().item() + 1)
+        num_mols = int(batch.max().item()) + 1
 
         # Atom to fragment pooling
-        frag = global_add_pool(atom_emb, atom_to_frag, size=num_frags).relu()
+        frag = global_mean_pool(atom_emb, atom_to_frag, size=num_frags).relu()
 
         frag_edge_index = build_fragment_complete_graph(frag_to_mol)
 
@@ -245,14 +246,10 @@ class FragComboPNA(nn.Module):
         c = F.elu(c)
         c = F.dropout(c, p=self.dropout, training=self.training)
 
-        frag = self.frag_gru(c, frag)
-        frag = F.relu(frag)
-
-        frag = self.frag_lin(frag)
-        frag = F.relu(frag)
+        frag = c
 
         # Fragment pooling
-        mol_frag = global_add_pool(frag, frag_to_mol).relu()
+        mol_frag = global_mean_pool(frag, frag_to_mol, size=num_mols).relu()
 
         # Final concat and output
         mol_final = torch.cat([mol, mol_frag], dim=-1)
