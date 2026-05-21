@@ -47,6 +47,11 @@ def simple_featurizer(
     if mol is None:
         raise ValueError(f"Could not parse SMILES: {smiles!r}")
 
+    fragments = Chem.GetMolFrags(mol, asMols=False)
+    fragment_id = torch.empty(mol.GetNumAtoms(), dtype=torch.long)
+    for frag_idx, atom_indices in enumerate(fragments):
+        fragment_id[list(atom_indices)] = frag_idx
+
     x = torch.tensor([
         [ATOM_FEATURES[f](atom) for f in atom_features]
         for atom in mol.GetAtoms()
@@ -66,6 +71,13 @@ def simple_featurizer(
         edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_attr = torch.empty((0, len(bond_features)), dtype=torch.float)
 
-    features = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, smiles=smiles)
+    features = Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        fragment_id=fragment_id,
+        num_fragments=torch.tensor([len(fragments)], dtype=torch.long),
+        smiles=smiles,
+    )
 
     return features
