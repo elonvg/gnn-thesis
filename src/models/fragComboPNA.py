@@ -154,7 +154,7 @@ class FragComboPNA(nn.Module):
 
         # Fragment attention 
         self.frag_gat = GATv2Conv(hidden_dim, hidden_dim, dropout=dropout,
-                                  add_self_loops=False, negative_slope=0.01)
+                                  add_self_loops=True, negative_slope=0.01)
         self.frag_gru = GRUCell(hidden_dim, hidden_dim)
         self.frag_lin = Linear(hidden_dim, hidden_dim)
 
