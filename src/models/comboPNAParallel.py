@@ -24,6 +24,7 @@ class ComboPNAParallel(nn.Module):
             hidden_dim=64,
             aggregators=DEFAULT_AGGREGATORS,
             scalers=DEFAULT_SCALERS,
+            towers=1,
             deg=None,
             out_dim=64,
             num_layers=2,
@@ -37,6 +38,7 @@ class ComboPNAParallel(nn.Module):
         self.hidden_dim = hidden_dim
         self.aggregators = aggregators
         self.scalers = scalers
+        self.towers = towers
         self.deg = deg
         self.out_dim = out_dim
         self.num_layers = num_layers
@@ -64,6 +66,7 @@ class ComboPNAParallel(nn.Module):
                           edge_dim=edge_dim, 
                           aggregators=self.aggregators,
                           scalers=self.scalers,
+                          towers=self.towers,
                           deg=self.deg,
                         )
             
@@ -135,10 +138,10 @@ class ComboPNAParallel(nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         mol_edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
         
-        mol = global_add_pool(x, batch).relu_() # Initial molecule state vector
+        mol = global_mean_pool(x, batch).relu_() # Initial molecule state vector
 
         # Repeat for num_timesteps
-        for t in range(self.num_timesteps):
+        for _ in range(self.num_timesteps):
             c = self.mol_gat((x, mol), mol_edge_index) # Attention
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
