@@ -11,6 +11,10 @@ except ImportError:  # pragma: no cover - fallback for minimal environments
 from .metrics import regression_metrics
 
 
+METRIC_NAMES = ("loss", "rmse", "mean_ae", "median_ae")
+SPLIT_PREFIXES = ("train", "val", "test")
+
+
 def predict_df(model, loader, device, cols=None):
     return _collect_eval_outputs(model, loader, None, device, cols=cols)["results_df"]
 
@@ -137,7 +141,14 @@ def evaluate_by_groups(model, loader, loss_fn, device, group_cols):
     return (*eval_outputs["metrics"], eval_outputs["group_metrics"])
 
 
-def add_joint_metrics_to_history(history, joint_metrics, main_category, sub_category, prefix=None):
+def add_joint_metrics_to_history(
+    history,
+    joint_metrics,
+    main_category,
+    sub_category,
+    prefix=None,
+    epoch_index=None,
+):
     joint_history = history.setdefault("joint_metrics", {}).setdefault(main_category, {})
 
     for main_value, sub_metrics in joint_metrics.items():
@@ -155,7 +166,11 @@ def add_joint_metrics_to_history(history, joint_metrics, main_category, sub_cate
                 if metric_name == "n":
                     entry[key] = metric_value
                 else:
-                    entry.setdefault(key, []).append(metric_value)
+                    values = entry.setdefault(key, [])
+                    if epoch_index is not None:
+                        while len(values) < epoch_index:
+                            values.append(None)
+                    values.append(metric_value)
 
     return history
 
@@ -300,30 +315,27 @@ def _init_history(record_categories=None, include_val=False, include_test=False)
     return history
 
 
-def _record_categories(history, prefix, loss, rmse, mean_ae, median_ae):
-    history[f"{prefix}_loss"].append(loss)
-    history[f"{prefix}_rmse"].append(rmse)
-    history[f"{prefix}_mean_ae"].append(mean_ae)
-    history[f"{prefix}_median_ae"].append(median_ae)
+def _metric_history_keys():
+    return [f"{prefix}_{metric}" for prefix in SPLIT_PREFIXES for metric in METRIC_NAMES]
+
+
+def _record_split_metrics(history, prefix, metrics):
+    if f"{prefix}_loss" not in history:
+        return
+
+    if metrics is None:
+        for metric_name in METRIC_NAMES:
+            history[f"{prefix}_{metric_name}"].append(None)
+        return
+
+    for metric_name, metric_value in zip(METRIC_NAMES, metrics):
+        history[f"{prefix}_{metric_name}"].append(metric_value)
 
 
 def _record_group_metrics(history, group_key, prefix, group_metrics):
     group_history = history.setdefault(group_key, {})
     epoch_index = len(history["train_loss"]) - 1
-    all_keys = [
-        "train_loss",
-        "train_rmse",
-        "train_mean_ae",
-        "train_median_ae",
-        "val_loss",
-        "val_rmse",
-        "val_mean_ae",
-        "val_median_ae",
-        "test_loss",
-        "test_rmse",
-        "test_mean_ae",
-        "test_median_ae"
-    ]
+    all_keys = _metric_history_keys()
 
     if not group_metrics:
         return
@@ -486,25 +498,25 @@ def _finalize_group_history(history, group_key):
         return
 
     epoch_len = len(history["train_loss"])
-    all_keys = [
-        "train_loss",
-        "train_rmse",
-        "train_mean_ae",
-        "train_median_ae",
-        "val_loss",
-        "val_rmse",
-        "val_mean_ae",
-        "val_median_ae",
-        "test_loss",
-        "test_rmse",
-        "test_mean_ae",
-        "test_median_ae",
-    ]
+    all_keys = _metric_history_keys()
 
     for entry in history[group_key].values():
         for key in all_keys:
             while len(entry[key]) < epoch_len:
                 entry[key].append(None)
+
+
+def _finalize_joint_history(history, main_category, sub_category):
+    epoch_len = len(history["history_all"]["train_loss"])
+    joint_history = history.get("joint_metrics", {}).get(main_category, {})
+    all_keys = _metric_history_keys()
+
+    for main_history in joint_history.values():
+        for entry in main_history.get(sub_category, {}).values():
+            for key in all_keys:
+                values = entry.setdefault(key, [])
+                while len(values) < epoch_len:
+                    values.append(None)
 
 
 def _propagate_history_metadata(history):
@@ -535,6 +547,20 @@ def _write_progress_message(progress_bar, message):
     print(message)
 
 
+def _validate_interval(name, value, allow_none=False, allow_zero=False):
+    if value is None and allow_none:
+        return value
+    if allow_zero and value == 0:
+        return value
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
+def _should_run_interval(epoch, total_epochs, every):
+    return (epoch + 1) % every == 0 or epoch == total_epochs - 1
+
+
 def train(
     model,
     train_loader,
@@ -548,6 +574,8 @@ def train(
     early_stopping_patience=None,
     early_stopping_min_delta=0.0,
     verbose_every=10,
+    eval_every=1,
+    log_every=None,
     record_categories=None,
     record_joint_categories=None,
     label_encoder=None,
@@ -559,6 +587,15 @@ def train(
         raise ValueError("loss_fn and optimizer must both be provided.")
     if early_stopping_patience is not None and early_stopping_patience <= 0:
         raise ValueError("early_stopping_patience must be positive when provided.")
+    eval_every = _validate_interval("eval_every", eval_every)
+    log_every = _validate_interval(
+        "log_every",
+        log_every,
+        allow_none=True,
+        allow_zero=True,
+    )
+    if log_every is None:
+        log_every = eval_every
 
     monitor_name = (
         "val_loss"
@@ -587,11 +624,13 @@ def train(
         for epoch in epoch_iterator:
             train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device)
             history["history_all"]["train_loss"].append(train_loss)
+            should_evaluate = _should_run_interval(epoch, epochs, eval_every)
+            should_log = log_every != 0 and _should_run_interval(epoch, epochs, log_every)
 
             train_group_metrics = None
             train_joint_metrics = None
             record_detailed_metrics = record_categories is not None or record_joint_categories is not None
-            if record_detailed_metrics:
+            if should_evaluate and record_detailed_metrics:
                 train_eval_outputs = _evaluate_with_recorded_groups(
                     model,
                     train_loader,
@@ -606,7 +645,7 @@ def train(
             val_metrics = None
             val_group_metrics = None
             val_joint_metrics = None
-            if val_loader is not None:
+            if should_evaluate and val_loader is not None:
                 if record_detailed_metrics:
                     val_eval_outputs = _evaluate_with_recorded_groups(
                         model,
@@ -625,7 +664,7 @@ def train(
             test_metrics = None
             test_group_metrics = None
             test_joint_metrics = None
-            if test_loader is not None:
+            if should_evaluate and test_loader is not None:
                 if record_detailed_metrics:
                     test_eval_outputs = _evaluate_with_recorded_groups(
                         model,
@@ -641,27 +680,16 @@ def train(
                 else:
                     test_metrics = evaluate(model, test_loader, loss_fn, device)
 
-            if val_metrics is not None:
-                history["history_all"]["val_loss"].append(val_metrics[0])
-                history["history_all"]["val_rmse"].append(val_metrics[1])
-                history["history_all"]["val_mean_ae"].append(val_metrics[2])
-                history["history_all"]["val_median_ae"].append(val_metrics[3])
-
-            if test_metrics is not None:
-                history["history_all"]["test_loss"].append(test_metrics[0])
-                history["history_all"]["test_rmse"].append(test_metrics[1])
-                history["history_all"]["test_mean_ae"].append(test_metrics[2])
-                history["history_all"]["test_median_ae"].append(test_metrics[3])
+            _record_split_metrics(history["history_all"], "val", val_metrics)
+            _record_split_metrics(history["history_all"], "test", test_metrics)
 
             for metric_name, metric_history in history.items():
                 if metric_name in ("history_all", "joint_metrics"):
                     continue
 
                 metric_history["train_loss"].append(train_loss)
-                if val_metrics is not None:
-                    _record_categories(metric_history, "val", *val_metrics)
-                if test_metrics is not None:
-                    _record_categories(metric_history, "test", *test_metrics)
+                _record_split_metrics(metric_history, "val", val_metrics)
+                _record_split_metrics(metric_history, "test", test_metrics)
 
                 if record_categories is not None:
                     category = metric_name.replace("history_", "", 1)
@@ -683,6 +711,7 @@ def train(
                         main_category,
                         sub_category,
                         prefix="train",
+                        epoch_index=epoch,
                     )
                 if val_joint_metrics is not None:
                     add_joint_metrics_to_history(
@@ -691,6 +720,7 @@ def train(
                         main_category,
                         sub_category,
                         prefix="val",
+                        epoch_index=epoch,
                     )
                 if test_joint_metrics is not None:
                     add_joint_metrics_to_history(
@@ -699,16 +729,18 @@ def train(
                         main_category,
                         sub_category,
                         prefix="test",
+                        epoch_index=epoch,
                     )
+                _finalize_joint_history(history, main_category, sub_category)
 
             if val_metrics is not None:
                 monitor_value = val_metrics[0]
             elif test_metrics is not None:
                 monitor_value = test_metrics[0]
             else:
-                monitor_value = train_loss
+                monitor_value = train_loss if val_loader is None and test_loader is None else None
 
-            if scheduler is not None:
+            if scheduler is not None and monitor_value is not None:
                 scheduler.step(monitor_value)
 
             if progress_bar is not None:
@@ -724,7 +756,7 @@ def train(
                     progress_parts.append(_format_progress("Test", *test_metrics))
                 print(f"Epoch {epoch + 1}: " + ", ".join(progress_parts))
 
-            if run is not None:
+            if run is not None and should_log:
                 run.log(
                     _build_run_log(
                         epoch,
@@ -738,6 +770,9 @@ def train(
                         optimizer=optimizer,
                     )
                 )
+
+            if monitor_value is None:
+                continue
 
             if monitor_value < best_monitor_value - early_stopping_min_delta:
                 best_monitor_value = monitor_value
