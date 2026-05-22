@@ -1,0 +1,219 @@
+import torch
+from torch import nn
+import torch.nn.functional as F
+from torch.nn import GRUCell, Linear
+
+from typing import Optional
+
+import torch
+from torch import nn
+import torch.nn.functional as F
+from torch import Tensor
+from torch.nn import GRUCell, Linear, Parameter
+
+from torch_geometric.nn import GATConv, MessagePassing, global_add_pool, global_mean_pool
+from torch_geometric.nn.inits import glorot, zeros
+from torch_geometric.typing import Adj, OptTensor
+from torch_geometric.utils import softmax
+
+from torch_geometric.nn import (
+    GATv2Conv,
+    PNAConv, 
+    global_add_pool, 
+    global_mean_pool,
+    global_max_pool
+)
+from src import data
+
+DEFAULT_AGGREGATORS = ("mean", "min", "max", "std")
+DEFAULT_SCALERS = ("identity", "amplification", "attenuation")
+
+class GATEConv(MessagePassing):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        edge_dim: int,
+        dropout: float = 0.0,
+    ):
+        super().__init__(aggr='add', node_dim=0)
+
+        self.dropout = dropout
+
+        self.att_l = Parameter(torch.empty(1, out_channels))
+        self.att_r = Parameter(torch.empty(1, in_channels))
+
+        self.lin1 = Linear(in_channels + edge_dim, out_channels, False)
+        self.lin2 = Linear(out_channels, out_channels, False)
+
+        self.bias = Parameter(torch.empty(out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        glorot(self.att_l)
+        glorot(self.att_r)
+        glorot(self.lin1.weight)
+        glorot(self.lin2.weight)
+        zeros(self.bias)
+
+    def forward(self, x: Tensor, edge_index: Adj, edge_attr: Tensor) -> Tensor:
+        # edge_updater_type: (x: Tensor, edge_attr: Tensor)
+        alpha = self.edge_updater(edge_index, x=x, edge_attr=edge_attr)
+
+        # propagate_type: (x: Tensor, alpha: Tensor)
+        out = self.propagate(edge_index, x=x, alpha=alpha)
+        out = out + self.bias
+        return out
+
+    def edge_update(self, x_j: Tensor, x_i: Tensor, edge_attr: Tensor,
+                    index: Tensor, ptr: OptTensor,
+                    size_i: Optional[int]) -> Tensor:
+        x_j = F.leaky_relu_(self.lin1(torch.cat([x_j, edge_attr], dim=-1)))
+        alpha_j = (x_j @ self.att_l.t()).squeeze(-1)
+        alpha_i = (x_i @ self.att_r.t()).squeeze(-1)
+        alpha = alpha_j + alpha_i
+        alpha = F.leaky_relu_(alpha)
+        alpha = softmax(alpha, index, ptr, size_i)
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        return alpha
+
+    def message(self, x_j: Tensor, alpha: Tensor) -> Tensor:
+        return self.lin2(x_j) * alpha.unsqueeze(-1)
+
+class AFPPNA(nn.Module):
+
+    def __init__(
+            self,
+            in_channels=9,
+            edge_dim=3,
+            hidden_dim=64,
+            aggregators=DEFAULT_AGGREGATORS,
+            scalers=DEFAULT_SCALERS,
+            towers=1,
+            deg=None,
+            out_dim=64,
+            num_layers=2,
+            num_timesteps=2,
+            dropout: float=0.2,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.edge_dim = edge_dim
+        self.hidden_dim = hidden_dim
+        self.aggregators = aggregators
+        self.scalers = scalers
+        self.towers = towers
+        self.deg = deg
+        self.out_dim = out_dim
+        self.num_layers = num_layers
+        self.num_timesteps = num_timesteps
+        self.dropout = dropout
+
+        self.lin1 = Linear(in_channels, hidden_dim)
+
+        self.gat = GATEConv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout)
+        self.gru = GRUCell(hidden_dim, hidden_dim)
+
+        # GAT / PNA Layers
+        self.atom_gats = nn.ModuleList() 
+        self.atom_pnas = nn.ModuleList()
+        self.atom_lins = nn.ModuleList()
+        self.atom_grus = nn.ModuleList()
+        for _ in range(num_layers - 1):
+            gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
+                            add_self_loops=False, # add_self_loops=False since GRU will handle self-loops
+                            negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
+
+            pna = PNAConv(in_channels=hidden_dim,
+                          out_channels=hidden_dim, 
+                          edge_dim=edge_dim, 
+                          aggregators=self.aggregators,
+                          scalers=self.scalers,
+                          towers=self.towers,
+                          deg=self.deg,
+                        )
+            
+            lin = Linear(2 * hidden_dim, hidden_dim)
+            
+            gru = GRUCell(hidden_dim, hidden_dim)
+
+            self.atom_gats.append(gat)
+            self.atom_pnas.append(pna)
+            self.atom_lins.append(lin)
+            self.atom_grus.append(gru)  
+
+        self.mol_gat = GATv2Conv(hidden_dim, hidden_dim, dropout=dropout,
+                                  add_self_loops=False, negative_slope=0.01)
+        # self.mol_gat.explain = False # Cannot explain global pooling.
+        self.mol_gru = GRUCell(hidden_dim, hidden_dim)
+
+        self.lin2 = Linear(hidden_dim, out_dim)
+
+    def reset_parameters(self):
+        r"""Resets all learnable parameters of the module."""
+        self.lin1.reset_parameters()
+        self.gat.reset_parameters()
+        self.gru.reset_parameters()
+        for gat, pna, lin, gru in zip(self.atom_gats, self.atom_pnas, self.atom_lins, self.atom_grus):
+            gat.reset_parameters()
+            pna.reset_parameters()
+            lin.reset_parameters()
+            gru.reset_parameters()
+        self.mol_gat.reset_parameters()
+        self.mol_gru.reset_parameters()
+        self.lin2.reset_parameters()
+
+
+    def forward(self, data):
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+
+        # Initial atom embedding
+        x = self.lin1(x)
+        x = F.leaky_relu(x)
+
+        # Attention layers
+        c = self.gat(x, edge_index, edge_attr) # Context vector
+        c = F.elu(c)
+        c = F.dropout(c, p=self.dropout, training=self.training)
+
+        # Recursive update
+        x = self.gru(c, x)
+        x = F.relu(x)
+
+        # GAT / PNA Layers
+        for gat, pna, lin, gru in zip(self.atom_gats, self.atom_pnas, self.atom_lins, self.atom_grus):
+            gatc = gat(x, edge_index, edge_attr)
+            gatc = F.elu(gatc)
+            gatc = F.dropout(gatc, p=self.dropout, training=self.training)
+
+            pc= pna(x, edge_index, edge_attr)
+            pc = F.elu(pc)
+            pc = F.dropout(pc, p=self.dropout, training=self.training)
+
+            c = torch.cat([gatc, pc], dim=-1) # Combine GAT and PNA outputs
+            c = lin(c) # Linear layer to mix GAT and PNA features
+            c = F.elu(c)
+
+            x = gru(c, x)
+            x = F.relu(x)
+
+        # Molecule embedding
+        row = torch.arange(batch.size(0), device=batch.device) # Atom indices
+        mol_edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
+        
+        mol = global_mean_pool(x, batch).relu_() # Initial molecule state vector
+
+        # Repeat for num_timesteps
+        for _ in range(self.num_timesteps):
+            c = self.mol_gat((x, mol), mol_edge_index) # Attention
+            c = F.elu(c)
+            c = F.dropout(c, p=self.dropout, training=self.training)
+            mol = self.mol_gru(c, mol)
+            mol = F.relu(mol)
+
+        out = F.dropout(mol, p=self.dropout, training=self.training)
+        out = self.lin2(out)
+
+        return out
