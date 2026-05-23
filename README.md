@@ -1,2 +1,3 @@
 # GNN Thesis Project
-## Thesis
+Repository for Master's Thesis about using a GNN to predict chemical toxicity
+Work in progess
