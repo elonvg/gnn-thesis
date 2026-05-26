@@ -97,17 +97,17 @@ class Combo(nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
         
-        out = global_add_pool(x, batch).relu_() # Initial molecule state vector
+        mol = global_mean_pool(x, batch).relu_() # Initial molecule state vector
 
         # Repeat for num_timesteps
         for t in range(self.num_timesteps):
-            c = self.mol_gat((x, out), edge_index) # Attention
+            c = self.mol_gat((x, mol), edge_index) # Attention
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
-            out = self.mol_gru(c, out)
-            out = F.relu(out)
+            mol = self.mol_gru(c, mol)
+            mol = F.relu(mol)
 
-        out = F.dropout(out, p=self.dropout, training=self.training)
+        out = F.dropout(mol, p=self.dropout, training=self.training)
         out = self.lin2(out)
 
         return out
