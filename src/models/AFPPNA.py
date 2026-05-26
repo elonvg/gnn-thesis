@@ -29,6 +29,7 @@ DEFAULT_AGGREGATORS = ("mean", "min", "max", "std")
 DEFAULT_SCALERS = ("identity", "amplification", "attenuation")
 
 class GATEConv(MessagePassing):
+
     def __init__(
         self,
         in_channels: int,
@@ -82,6 +83,8 @@ class GATEConv(MessagePassing):
         return self.lin2(x_j) * alpha.unsqueeze(-1)
 
 class AFPPNA(nn.Module):
+
+    "CombaPNARarallel but first layer is GATEConv instead of GATv2Conv"
 
     def __init__(
             self,
