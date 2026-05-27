@@ -216,7 +216,7 @@ class FragComboPNAInit(nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         mol_edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
         
-        mol = global_add_pool(atom_emb, batch).relu_() # Initial molecule state vector
+        mol = global_mean_pool(atom_emb, batch).relu_() # Initial molecule state vector
 
         # Repeat for num_timesteps
         for _ in range(self.num_timesteps):
