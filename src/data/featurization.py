@@ -118,8 +118,6 @@ def simple_featurizer_onehot(
     ATOM_FEATURES = {
         "atomic_num":             (lambda a: a.GetAtomicNum(), tuple(range(1, 119)), True),
         "atomic_num_scaled":      (lambda a: a.GetAtomicNum(), tuple(range(1, 119)), True),
-        "mass":                   (lambda a: int(round(a.GetMass())), tuple(range(1, 295)), True),
-        "mass_scaled":            (lambda a: int(round(a.GetMass())), tuple(range(1, 295)), True),
         "degree":                 (lambda a: a.GetTotalDegree(), tuple(range(0, 7)), True),
         "formal_charge":          (lambda a: a.GetFormalCharge(), tuple(range(-5, 6)), True),
         "num_hs":                 (lambda a: a.GetTotalNumHs(), tuple(range(0, 5)), True),

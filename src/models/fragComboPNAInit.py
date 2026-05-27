@@ -197,11 +197,11 @@ class FragComboPNAInit(nn.Module):
         # c = self.lin2(c) # Linear layer to mix GAT and PNA features
         # c = F.elu(c)
 
-        # Recursive update
+        # Residual update
         x = self.gru(c, x)
         x = F.relu(x)
 
-        # GAT / PNA Layers
+        # More GAT Layers
         for gat, gru in zip(self.atom_gats, self.atom_grus):
             c = gat(x, edge_index, edge_attr)
             c = F.elu(c)
@@ -220,7 +220,7 @@ class FragComboPNAInit(nn.Module):
 
         # Repeat for num_timesteps
         for _ in range(self.num_timesteps):
-            c = self.mol_gat((atom_emb, mol), mol_edge_index) # Attention
+            c = self.mol_gat((atom_emb, mol), mol_edge_index)
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
 
@@ -234,7 +234,7 @@ class FragComboPNAInit(nn.Module):
         num_mols = int(batch.max().item()) + 1
 
         # Atom to fragment pooling
-        frag = global_mean_pool(atom_emb, atom_to_frag, size=num_frags).relu()
+        frag = global_add_pool(atom_emb, atom_to_frag, size=num_frags).relu() # Initial fragment vector from pooling atom embeddings
 
         frag_edge_index = build_fragment_complete_graph(frag_to_mol)
 
@@ -247,7 +247,7 @@ class FragComboPNAInit(nn.Module):
         frag = F.relu(frag)
 
         # Fragment pooling
-        mol_frag = global_mean_pool(frag, frag_to_mol, size=num_mols).relu()
+        mol_frag = global_mean_pool(frag, frag_to_mol, size=num_mols).relu() # Final fragment vector from pooling fragment embeddings
 
         # Final concat and output
         mol_final = torch.cat([mol, mol_frag], dim=-1)
