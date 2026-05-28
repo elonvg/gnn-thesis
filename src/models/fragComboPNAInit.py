@@ -239,12 +239,13 @@ class FragComboPNAInit(nn.Module):
         frag_edge_index = build_fragment_complete_graph(frag_to_mol)
 
         # Fragment attention
-        c = self.frag_gat(frag, frag_edge_index)
-        c = F.elu(c)
-        c = F.dropout(c, p=self.dropout, training=self.training)
+        for _ in range(self.num_timesteps):
+            c = self.frag_gat(frag, frag_edge_index)
+            c = F.elu(c)
+            c = F.dropout(c, p=self.dropout, training=self.training)
 
-        frag = self.frag_gru(c, frag)
-        frag = F.relu(frag)
+            frag = self.frag_gru(c, frag)
+            frag = F.relu(frag)
 
         # Fragment pooling
         mol_frag = global_mean_pool(frag, frag_to_mol, size=num_mols).relu() # Final fragment vector from pooling fragment embeddings
