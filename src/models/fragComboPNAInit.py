@@ -185,11 +185,11 @@ class FragComboPNAInit(nn.Module):
         x = F.leaky_relu(x)
 
         # First GAT and PNA layers in parallel
-        gatc = self.gat(x, edge_index, edge_attr) # Context vector
+        gatc = self.gat(x, edge_index, edge_attr) # Context vector ("selective attention" from neighbours)
         gatc = F.elu(gatc)
         gatc = F.dropout(gatc, p=self.dropout, training=self.training)
 
-        pc= self.pna(x, edge_index, edge_attr)
+        pc= self.pna(x, edge_index, edge_attr) # PNA context vector ("aggregation" from neighbours)
         pc = F.elu(pc)
         pc = F.dropout(pc, p=self.dropout, training=self.training)
 
