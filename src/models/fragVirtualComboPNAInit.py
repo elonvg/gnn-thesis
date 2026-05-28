@@ -121,15 +121,6 @@ class FragVirtualComboPNAInit(nn.Module):
                             add_self_loops=False, # add_self_loops=False since GRU will handle self-loops
                             negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
         
-        self.virtual_gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=virtual_edge_dim, dropout=dropout,
-                            add_self_loops=False, # add_self_loops=False since GRU will handle self-loops
-                            negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
-        
-        self.virtual_gate = nn.Sequential(
-            Linear(2* hidden_dim, hidden_dim),
-            nn.Sigmoid()
-        )
-        
         self.pna = PNAConv(in_channels=hidden_dim,
                         out_channels=hidden_dim, 
                         edge_dim=edge_dim, 
@@ -138,6 +129,17 @@ class FragVirtualComboPNAInit(nn.Module):
                         towers=self.towers,
                         deg=self.deg,
                     )
+        
+        self.virtual_gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=virtual_edge_dim, dropout=dropout,
+                    add_self_loops=False, # add_self_loops=False since GRU will handle self-loops
+                    negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
+        
+        self.virtual_gate = nn.Sequential(
+            Linear(2* hidden_dim, hidden_dim),
+            nn.Sigmoid()
+        )
+
+        self.virtual_gru = GRUCell(hidden_dim, hidden_dim)
         
         # self.lin2 = Linear(2 * hidden_dim, hidden_dim) # Linear layer to mix GAT and PNA features
 
@@ -173,9 +175,10 @@ class FragVirtualComboPNAInit(nn.Module):
         r"""Resets all learnable parameters of the module."""
         self.lin1.reset_parameters()
         self.gat.reset_parameters()
+        self.pna.reset_parameters()
         self.virtual_gat.reset_parameters()
         self.virtual_gate[0].reset_parameters()
-        self.pna.reset_parameters()
+        self.virtual_gru.reset_parameters()
         self.gru.reset_parameters()
         for gat, gru in zip(self.atom_gats, self.atom_grus):
             gat.reset_parameters()
@@ -201,18 +204,21 @@ class FragVirtualComboPNAInit(nn.Module):
         gatc = F.elu(gatc)
         gatc = F.dropout(gatc, p=self.dropout, training=self.training)
 
+        pc= self.pna(x, edge_index, edge_attr) # PNA context vector ("aggregation" from neighbours)
+        pc = F.elu(pc)
+        pc = F.dropout(pc, p=self.dropout, training=self.training)
+
         # Virtual GAT context vector
         if virtual_edge_index.numel() > 0:
             vgatc = self.virtual_gat(x, virtual_edge_index, virtual_edge_attr) # Virtual GAT context vector
             vgatc = F.elu(vgatc)
             vgatc = F.dropout(vgatc, p=self.dropout, training=self.training)
 
-            gate = self.virtual_gate(torch.cat([gatc, vgatc], dim=-1)) 
-            gatc = gatc + gate * vgatc # Combine GAT and virtual GAT outputs using the gate
+            # gate = self.virtual_gate(torch.cat([gatc, vgatc], dim=-1)) 
+            # gatc = gatc + gate * vgatc # Combine GAT and virtual GAT outputs using the gate
 
-        pc= self.pna(x, edge_index, edge_attr) # PNA context vector ("aggregation" from neighbours)
-        pc = F.elu(pc)
-        pc = F.dropout(pc, p=self.dropout, training=self.training)
+            gatc = self.virtual_gru(vgatc, gatc)
+            # gatc = F.relu(gatc)
 
         c = torch.cat([gatc, pc], dim=-1) # Combine GAT and PNA outputs
         # c = self.lin2(c) # Linear layer to mix GAT and PNA features
