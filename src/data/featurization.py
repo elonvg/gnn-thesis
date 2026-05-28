@@ -8,6 +8,134 @@ from torch_geometric.data import Data
 from rdkit import RDLogger
 
 
+VIRTUAL_EDGE_FEATURES = (
+    "src_is_charged",
+    "dst_is_charged",
+    "src_is_metal",
+    "dst_is_metal",
+    "src_is_single_atom_fragment",
+    "dst_is_single_atom_fragment",
+    "opposite_charge",
+    "same_charge",
+    "src_formal_charge",
+    "dst_formal_charge",
+)
+VIRTUAL_EDGE_DIM = len(VIRTUAL_EDGE_FEATURES)
+
+
+def _is_metal_atomic_num(num):
+    return (3 <= num <= 4) or (11 <= num <= 13) or (19 <= num <= 31) or \
+           (37 <= num <= 50) or (55 <= num <= 84) or (num >= 87)
+
+
+def _atom_virtual_flags(atom, fragment_size):
+    charge = atom.GetFormalCharge()
+    is_charged = charge != 0
+    is_metal = _is_metal_atomic_num(atom.GetAtomicNum())
+    is_single_atom_fragment = fragment_size == 1
+    return is_charged, is_metal, is_single_atom_fragment, charge
+
+
+def _is_virtual_anchor(atom, fragment_size):
+    is_charged, is_metal, is_single_atom_fragment, _ = _atom_virtual_flags(atom, fragment_size)
+    return is_charged or is_metal or is_single_atom_fragment
+
+
+def _virtual_edge_attr(mol, fragments_by_atom, src_idx, dst_idx):
+    src_atom = mol.GetAtomWithIdx(src_idx)
+    dst_atom = mol.GetAtomWithIdx(dst_idx)
+    src_fragment_size = fragments_by_atom[src_idx]
+    dst_fragment_size = fragments_by_atom[dst_idx]
+
+    src_is_charged, src_is_metal, src_is_single_atom_fragment, src_charge = _atom_virtual_flags(
+        src_atom,
+        src_fragment_size,
+    )
+    dst_is_charged, dst_is_metal, dst_is_single_atom_fragment, dst_charge = _atom_virtual_flags(
+        dst_atom,
+        dst_fragment_size,
+    )
+
+    opposite_charge = src_charge * dst_charge < 0
+    same_charge = src_charge != 0 and src_charge == dst_charge
+
+    return [
+        float(src_is_charged),
+        float(dst_is_charged),
+        float(src_is_metal),
+        float(dst_is_metal),
+        float(src_is_single_atom_fragment),
+        float(dst_is_single_atom_fragment),
+        float(opposite_charge),
+        float(same_charge),
+        float(src_charge),
+        float(dst_charge),
+    ]
+
+
+def _build_virtual_edges(mol, fragments, max_context_atoms=4):
+    """Build sparse cross-fragment context edges for charged/metal/single atoms."""
+    if len(fragments) <= 1:
+        return (
+            torch.empty((2, 0), dtype=torch.long),
+            torch.empty((0, VIRTUAL_EDGE_DIM), dtype=torch.float),
+        )
+
+    fragment_infos = []
+    fragments_by_atom = {}
+
+    for fragment in fragments:
+        atoms = list(fragment)
+        fragment_size = len(atoms)
+        anchors = [
+            atom_idx
+            for atom_idx in atoms
+            if _is_virtual_anchor(mol.GetAtomWithIdx(atom_idx), fragment_size)
+        ]
+
+        for atom_idx in atoms:
+            fragments_by_atom[atom_idx] = fragment_size
+
+        fragment_infos.append({
+            "atoms": atoms,
+            "anchors": anchors,
+        })
+
+    virtual_edges = []
+    virtual_attrs = []
+
+    for src_frag_idx, src_info in enumerate(fragment_infos):
+        for dst_frag_idx, dst_info in enumerate(fragment_infos):
+            if src_frag_idx == dst_frag_idx:
+                continue
+
+            src_has_anchors = len(src_info["anchors"]) > 0
+            dst_has_anchors = len(dst_info["anchors"]) > 0
+            if not src_has_anchors and not dst_has_anchors:
+                continue
+
+            src_nodes = src_info["anchors"] if src_has_anchors else src_info["atoms"][:max_context_atoms]
+            dst_nodes = dst_info["anchors"] if dst_has_anchors else dst_info["atoms"][:max_context_atoms]
+
+            for src_idx in src_nodes:
+                for dst_idx in dst_nodes:
+                    virtual_edges.append([src_idx, dst_idx])
+                    virtual_attrs.append(
+                        _virtual_edge_attr(mol, fragments_by_atom, src_idx, dst_idx)
+                    )
+
+    if not virtual_edges:
+        return (
+            torch.empty((2, 0), dtype=torch.long),
+            torch.empty((0, VIRTUAL_EDGE_DIM), dtype=torch.float),
+        )
+
+    return (
+        torch.tensor(virtual_edges, dtype=torch.long).t().contiguous(),
+        torch.tensor(virtual_attrs, dtype=torch.float),
+    )
+
+
 def simple_featurizer(
     smiles: str,
     atom_features: Sequence[str] = (
@@ -20,6 +148,8 @@ def simple_featurizer(
         "mass_scaled",
     ),
     bond_features: Sequence[str] = ("bond_order", "is_conjugated", "is_in_ring"),
+    add_virtual_edges: bool = True,
+    max_virtual_context_atoms: int = 4,
     ):
 
     RDLogger.DisableLog("rdApp.*")
@@ -77,10 +207,22 @@ def simple_featurizer(
         edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_attr = torch.empty((0, len(bond_features)), dtype=torch.float)
 
+    if add_virtual_edges:
+        virtual_edge_index, virtual_edge_attr = _build_virtual_edges(
+            mol,
+            fragments,
+            max_context_atoms=max_virtual_context_atoms,
+        )
+    else:
+        virtual_edge_index = torch.empty((2, 0), dtype=torch.long)
+        virtual_edge_attr = torch.empty((0, VIRTUAL_EDGE_DIM), dtype=torch.float)
+
     features = Data(
         x=x,
         edge_index=edge_index,
         edge_attr=edge_attr,
+        virtual_edge_index=virtual_edge_index,
+        virtual_edge_attr=virtual_edge_attr,
         fragment_id=fragment_id,
         num_fragments=torch.tensor([len(fragments)], dtype=torch.long),
         smiles=smiles,
@@ -100,6 +242,8 @@ def simple_featurizer_onehot(
         "is_in_ring",
     ),
     bond_features: Sequence[str] = ("bond_order", "is_conjugated", "is_in_ring"),
+    add_virtual_edges: bool = True,
+    max_virtual_context_atoms: int = 4,
     ):
     """Build a PyG graph with one-hot encoded atom and bond features.
 
@@ -227,10 +371,22 @@ def simple_featurizer_onehot(
         edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_attr = torch.empty((0, bond_feature_dim), dtype=torch.float)
 
+    if add_virtual_edges:
+        virtual_edge_index, virtual_edge_attr = _build_virtual_edges(
+            mol,
+            fragments,
+            max_context_atoms=max_virtual_context_atoms,
+        )
+    else:
+        virtual_edge_index = torch.empty((2, 0), dtype=torch.long)
+        virtual_edge_attr = torch.empty((0, VIRTUAL_EDGE_DIM), dtype=torch.float)
+
     features = Data(
         x=x,
         edge_index=edge_index,
         edge_attr=edge_attr,
+        virtual_edge_index=virtual_edge_index,
+        virtual_edge_attr=virtual_edge_attr,
         fragment_id=fragment_id,
         num_fragments=torch.tensor([len(fragments)], dtype=torch.long),
         smiles=smiles,
