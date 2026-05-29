@@ -6,9 +6,12 @@ import pandas as pd
 
 try:
     from rdkit import Chem
+    from rdkit.Chem import Descriptors, rdMolDescriptors
     from rdkit.Chem.SaltRemover import SaltRemover
 except ImportError:
     Chem = None
+    Descriptors = None
+    rdMolDescriptors = None
     SaltRemover = None
 
 
@@ -16,11 +19,58 @@ remover = SaltRemover() if SaltRemover is not None else None
 
 _SINGLE_ATOM_PATTERN = re.compile(r"[A-Z][a-z]?")
 _SINGLE_BRACKET_PATTERN = re.compile(r"\[[^\[\]\.]+\]")
+_HALOGEN_ATOMIC_NUMS = frozenset({9, 17, 35, 53, 85, 117})
+_TRANSITION_METAL_ATOMIC_NUMS = frozenset(
+    range(21, 31)
+) | frozenset(
+    range(39, 49)
+) | frozenset(
+    range(57, 81)
+) | frozenset(
+    range(89, 113)
+)
+
+MOLECULE_NUMERICAL_METADATA_COLUMNS = [
+    "fragment_count",
+    "mol_weight",
+    "log10_mol_weight",
+    "logp",
+    "tpsa",
+    "log10_tpsa_plus1",
+    "h_bond_donor_count",
+    "h_bond_acceptor_count",
+    "heavy_atom_count",
+    "log10_heavy_atom_count_plus1",
+    "hetero_atom_count",
+    "halogen_count",
+    "metal_count",
+    "transition_metal_count",
+    "ring_count",
+    "aromatic_ring_count",
+    "rotatable_bond_count",
+    "formal_charge",
+]
+
+MOLECULE_CATEGORICAL_METADATA_COLUMNS = [
+    "is_salt",
+    "has_metal",
+    "has_transition_metal",
+    "has_halogen",
+    "is_single_node",
+]
+
+MOLECULE_METADATA_COLUMNS = (
+    MOLECULE_NUMERICAL_METADATA_COLUMNS + MOLECULE_CATEGORICAL_METADATA_COLUMNS
+)
 
 
 def _is_metal_atomic_num(num):
     return (3 <= num <= 4) or (11 <= num <= 13) or (19 <= num <= 31) or \
            (37 <= num <= 50) or (55 <= num <= 84) or (num >= 87)
+
+
+def _is_transition_metal_atomic_num(num):
+    return num in _TRANSITION_METAL_ATOMIC_NUMS
 
 
 def _fallback_single_node(smiles):
@@ -78,6 +128,147 @@ def is_single_node(smiles):
 
 def has_metal(smiles):
     return _smiles_stats(smiles)[2]
+
+
+def _mol_from_smiles(smiles, sanitize=True):
+    try:
+        return Chem.MolFromSmiles(smiles, sanitize=sanitize)
+    except Exception:
+        return None
+
+
+def _safe_log10(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(value) or value <= 0:
+        return np.nan
+    return float(np.log10(value))
+
+
+def _safe_log10_plus1(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(value) or value < 0:
+        return np.nan
+    return float(np.log10(value + 1.0))
+
+
+def _descriptor_defaults(fragment_count_value=0, atom_count=0, has_metal_flag=False):
+    return {
+        "fragment_count": float(fragment_count_value),
+        "mol_weight": np.nan,
+        "log10_mol_weight": np.nan,
+        "logp": np.nan,
+        "tpsa": np.nan,
+        "log10_tpsa_plus1": np.nan,
+        "h_bond_donor_count": np.nan,
+        "h_bond_acceptor_count": np.nan,
+        "heavy_atom_count": float(atom_count),
+        "log10_heavy_atom_count_plus1": _safe_log10_plus1(atom_count),
+        "hetero_atom_count": np.nan,
+        "halogen_count": 0.0,
+        "metal_count": float(has_metal_flag),
+        "transition_metal_count": 0.0,
+        "ring_count": np.nan,
+        "aromatic_ring_count": np.nan,
+        "rotatable_bond_count": np.nan,
+        "formal_charge": np.nan,
+        "is_salt": float(fragment_count_value > 1),
+        "has_metal": float(has_metal_flag),
+        "has_transition_metal": 0.0,
+        "has_halogen": 0.0,
+        "is_single_node": float(atom_count == 1),
+    }
+
+
+def _metadata_tuple(metadata):
+    return tuple(metadata[col] for col in MOLECULE_METADATA_COLUMNS)
+
+
+@lru_cache(maxsize=100_000)
+def _molecule_metadata_cached(smiles):
+    fragment_count_value, atom_count, has_metal_flag = _smiles_stats(smiles)
+    metadata = _descriptor_defaults(
+        fragment_count_value=fragment_count_value,
+        atom_count=atom_count,
+        has_metal_flag=has_metal_flag,
+    )
+
+    if Chem is None:
+        return _metadata_tuple(metadata)
+
+    mol = _mol_from_smiles(smiles)
+    atom_mol = mol if mol is not None else _mol_from_smiles(smiles, sanitize=False)
+
+    if atom_mol is not None:
+        atoms = list(atom_mol.GetAtoms())
+        atom_numbers = [atom.GetAtomicNum() for atom in atoms]
+        heavy_atom_count_value = float(sum(num > 1 for num in atom_numbers))
+        metal_count_value = sum(_is_metal_atomic_num(num) for num in atom_numbers)
+        transition_metal_count_value = sum(
+            _is_transition_metal_atomic_num(num) for num in atom_numbers
+        )
+        halogen_count_value = sum(num in _HALOGEN_ATOMIC_NUMS for num in atom_numbers)
+
+        metadata.update({
+            "heavy_atom_count": heavy_atom_count_value,
+            "log10_heavy_atom_count_plus1": _safe_log10_plus1(heavy_atom_count_value),
+            "hetero_atom_count": float(sum(num not in (1, 6) for num in atom_numbers)),
+            "halogen_count": float(halogen_count_value),
+            "metal_count": float(metal_count_value),
+            "transition_metal_count": float(transition_metal_count_value),
+            "formal_charge": float(sum(atom.GetFormalCharge() for atom in atoms)),
+            "has_metal": float(metal_count_value > 0),
+            "has_transition_metal": float(transition_metal_count_value > 0),
+            "has_halogen": float(halogen_count_value > 0),
+        })
+
+    if mol is not None:
+        mol_weight_value = float(Descriptors.MolWt(mol))
+        tpsa_value = float(rdMolDescriptors.CalcTPSA(mol))
+
+        metadata.update({
+            "mol_weight": mol_weight_value,
+            "log10_mol_weight": _safe_log10(mol_weight_value),
+            "logp": float(Descriptors.MolLogP(mol)),
+            "tpsa": tpsa_value,
+            "log10_tpsa_plus1": _safe_log10_plus1(tpsa_value),
+            "h_bond_donor_count": float(rdMolDescriptors.CalcNumHBD(mol)),
+            "h_bond_acceptor_count": float(rdMolDescriptors.CalcNumHBA(mol)),
+            "ring_count": float(rdMolDescriptors.CalcNumRings(mol)),
+            "aromatic_ring_count": float(rdMolDescriptors.CalcNumAromaticRings(mol)),
+            "rotatable_bond_count": float(rdMolDescriptors.CalcNumRotatableBonds(mol)),
+        })
+
+    return _metadata_tuple(metadata)
+
+
+def molecule_metadata(smiles):
+    if not isinstance(smiles, str) or not smiles:
+        metadata = _descriptor_defaults()
+        return dict(zip(MOLECULE_METADATA_COLUMNS, _metadata_tuple(metadata)))
+
+    values = _molecule_metadata_cached(smiles)
+    return dict(zip(MOLECULE_METADATA_COLUMNS, values))
+
+
+def add_molecule_metadata(df, smiles_col="SMILES"):
+    metadata = pd.DataFrame(
+        [molecule_metadata(smiles) for smiles in df[smiles_col].fillna("")],
+        index=df.index,
+    )
+    metadata = metadata[MOLECULE_METADATA_COLUMNS].astype(float)
+
+    df = df.copy()
+    for col in MOLECULE_METADATA_COLUMNS:
+        df[col] = metadata[col]
+    return df
 
 
 def print_mol_types(df):
@@ -381,16 +572,13 @@ def process_data(
     print(f"Rows after preprocessing:  {len(df_processed):,}")
     print(f"Rows removed: {len(df_masked) - len(df_processed):,}")
 
-    # Add some metadata cols
-    df_processed["fragment_count"] = df_processed["SMILES"].apply(fragment_count).astype(float)
-    df_processed["is_salt"] = df_processed["SMILES"].apply(is_salt).astype(float)
-    df_processed["has_metal"] = df_processed["SMILES"].apply(has_metal).astype(float)
-    df_processed["is_single_node"] = df_processed["SMILES"].apply(is_single_node).astype(float)
-    
-    # Sample subset for quicker experiments
+    # Sample subset for quicker experiments before descriptor calculation.
     if n_samples is not None and len(df_processed) > n_samples:
         df_processed = df_processed.sample(n=n_samples, random_state=random_state).reset_index(drop=True)
     else:
         df_processed = df_processed.reset_index(drop=True)
-    
+
+    # Add molecule-level metadata for categorical and numerical encoders.
+    df_processed = add_molecule_metadata(df_processed)
+
     return df_processed
