@@ -138,8 +138,6 @@ class FragVirtualComboPNAInit(nn.Module):
             Linear(2* hidden_dim, hidden_dim),
             nn.Sigmoid()
         )
-
-        self.virtual_gru = GRUCell(hidden_dim, hidden_dim)
         
         # self.lin2 = Linear(2 * hidden_dim, hidden_dim) # Linear layer to mix GAT and PNA features
 
@@ -178,7 +176,6 @@ class FragVirtualComboPNAInit(nn.Module):
         self.pna.reset_parameters()
         self.virtual_gat.reset_parameters()
         self.virtual_gate[0].reset_parameters()
-        self.virtual_gru.reset_parameters()
         self.gru.reset_parameters()
         for gat, gru in zip(self.atom_gats, self.atom_grus):
             gat.reset_parameters()
@@ -214,11 +211,8 @@ class FragVirtualComboPNAInit(nn.Module):
             vgatc = F.elu(vgatc)
             vgatc = F.dropout(vgatc, p=self.dropout, training=self.training)
 
-            # gate = self.virtual_gate(torch.cat([gatc, vgatc], dim=-1)) 
-            # gatc = gatc + gate * vgatc # Combine GAT and virtual GAT outputs using the gate
-
-            gatc = self.virtual_gru(vgatc, gatc)
-            # gatc = F.relu(gatc)
+            gate = self.virtual_gate(torch.cat([gatc, vgatc], dim=-1)) 
+            gatc = gatc + gate * vgatc # Combine GAT and virtual GAT outputs using the gate
 
         c = torch.cat([gatc, pc], dim=-1) # Combine GAT and PNA outputs
         # c = self.lin2(c) # Linear layer to mix GAT and PNA features
