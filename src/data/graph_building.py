@@ -12,28 +12,23 @@ def _normalize_raw_taxid(value):
         return 0
 
 
-def build_graph_features(
+def build_graphs(
     df,
-    df_tax,
-    tax_embedding,
     df_categorical=None,
     categorical_columns=None,
     numerical_columns=None,
 ):
-    features = []
+    graph_objects = []
 
-    if df_categorical is not None and categorical_columns is None:
-        categorical_columns = list(df_categorical.columns)
-    if numerical_columns is None:
-        numerical_columns = ["duration"]
+    df_index = pd.DataFrame(index=df.index)
 
     for row_idx, graph in enumerate(df["features"]):
         graph.x = graph.x.float()
         graph.y = torch.tensor(df.iloc[row_idx]["log10c"], dtype=torch.float)
         graph.row_id = torch.tensor(row_idx, dtype=torch.long)
 
-        for col in df_tax.columns:
-            setattr(graph, col, torch.tensor(df_tax.iloc[row_idx][col], dtype=torch.long))
+        for col in df_index.columns:
+            setattr(graph, col, torch.tensor(df_index.iloc[row_idx][col], dtype=torch.long))
 
         if "taxid" in df.columns:
             graph.taxid_raw = torch.tensor(_normalize_raw_taxid(df.iloc[row_idx]["taxid"]), dtype=torch.long)
@@ -44,6 +39,6 @@ def build_graph_features(
 
         for col in numerical_columns:
             setattr(graph, col, torch.tensor(df.iloc[row_idx][col], dtype=torch.float))
-        features.append(graph)
+        graph_objects.append(graph)
 
-    return features
+    return graph_objects

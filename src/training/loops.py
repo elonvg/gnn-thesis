@@ -464,9 +464,9 @@ def _build_run_log(
                 label = str(label_decoder.get(category, {}).get(group_value, group_value))
                 
                 metrics.update(
-                    {
-                        f"cat_{category}/{label}/train_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["train_loss"][-1],
-                        f"cat_{category}/{label}/val_loss": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_loss"][-1],
+                    {   
+                        f"cat_{category}/{label}/val_rmse": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_rmse"][-1],
+                        f"cat_{category}/{label}/val_mean_ae": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_mean_ae"][-1],
                         f"cat_{category}/{label}/val_median_ae": history[f"history_{category}"][f"history_{category}_group"][group_value]["val_median_ae"][-1],
                     }
             

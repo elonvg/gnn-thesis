@@ -327,6 +327,19 @@ def _stratified_butina_split_indices(
 
 
 
+def butina_group_key(smiles, smiles_to_cluster):
+    
+    cluster_id = smiles_to_cluster.get(smiles, np.nan)
+
+    if pd.isna(cluster_id):
+        return f"__missing__::{smiles}"
+    
+    if isinstance(cluster_id, float) and cluster_id.is_integer():
+        cluster_id = int(cluster_id)
+
+    return f"cluster::{cluster_id}"
+
+
 def _build_dataset(features, indices):
     # Function for building the subset (train/test) from given indices
     return [deepcopy(features[i]) for i in indices]

@@ -6,28 +6,33 @@
 
 # Argparse
 import argparse
-
-from src.models.gin import GIN
+import random
+import numpy as np
+import torch
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--fold", type=int, default=0)
+parser.add_argument("--seed", type=int, default=11)
 args = parser.parse_args()
 
 fold_id = args.fold
+seed = args.seed
 print(f"Using fold_id: {fold_id}")
+print(f"Using seed: {seed}")
+
+random.seed(args.seed)
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+torch.cuda.manual_seed_all(args.seed)
 
 
 # # Hyperparameters
 
-# In[1]:
-
-
 USE_WANDB = True
 n_folds = 5
 
-N_SAMPLES = 1000  
+N_SAMPLES = 1000
 # N_SAMPLES = None
-random_state = 11
 
 BATCH_SIZE = 1024
 
@@ -46,12 +51,6 @@ MAX_DURATION_HOURS = 9000.0
 
 
 # # Setup
-
-# In[2]:
-
-
-# get_ipython().run_line_magic('load_ext', 'autoreload')
-# get_ipython().run_line_magic('autoreload', '2')
 
 from pathlib import Path
 import sys
@@ -73,7 +72,6 @@ if PROJECT_ROOT is None:
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -83,19 +81,11 @@ try:
 except ImportError:
     wandb = None
 
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from torch_geometric.loader import DataLoader
-from torch_geometric.utils.smiles import from_smiles
-
 from src.data.io import load_data
-from src.data.cleaning import process_data, print_mol_types
-from src.data.graph_building import build_graph_features
+from src.data.cleaning import process_data
 from src.data.metadata import sequential_encoder, build_config
-from src.data.cleaning import fragment_count, is_salt, has_metal, is_single_node
-from src.data.splitting import butina_split, show_split_info
-from src.data.sampling import LoadData, show_loader_info, display_sampling_effect
+from src.data.sampling import LoadData
 from src.training.loops import train
-from src.visualization.training_plots import  plot_training, plot_training_metrics, plot_group_training
 
 
 pd.set_option("display.max_columns", 40)
@@ -105,10 +95,6 @@ print("Imports imported")
 
 
 # # Load, filter and preprocess data
-# 
-
-# In[3]:
-
 
 DATA_PATH = PROJECT_ROOT / "Data" / "toxicity_all.csv"
 
@@ -122,7 +108,7 @@ df_all = load_data(DATA_PATH)
 df_processed = process_data(
     df_all,
     n_samples=N_SAMPLES,
-    random_state=random_state,
+    random_state=seed,
     filters=FILTERS,
     require_duration=False,
     require_taxid=True,
@@ -136,111 +122,136 @@ df_processed = process_data(
     keep_duration_raw=True,
 )
 
-print()
-print_mol_types(df_processed)
+# Build graphs - node / edge features
+from src.data.simple_featurizer import simple_featurizer
+from src.data.features_graph import GraphFeaturizer
 
-df_processed
+ATOM_FEATURES = (
+    "atomic_num",
+    "degree",
+    "formal_charge",
+    "num_hs",
+    "hybridization",
+    "is_aromatic",
+    "is_in_ring",
+    "atomic_mass",
+    "period",
+    "group",
+    "covalent_radius",
+    "vdw_radius",
+    "is_metal",
+)
 
+BOND_FEATURES = (
+    "bond_order",
+    "is_conjugated",
+    "is_in_ring",
+    "stereo",
+)
 
-# # Encoding Data
+graph_featurizer = GraphFeaturizer(ATOM_FEATURES, BOND_FEATURES)
 
-# ## Featiruze molecules
+df_processed["features"] = df_processed["SMILES"].apply(graph_featurizer.featurize)
 
-# In[4]:
-
-
-from src.data.featurization import simple_featurizer
-
-# df_processed["features"] = df_processed["SMILES"].apply(from_smiles)
-
-# atom_features = ["atomic_num", "mass"]
-# bond_features = ["bond_order"]
-df_processed["features"] = df_processed["SMILES"].apply(simple_featurizer)
+graph_cache = graph_featurizer.get_graph_cache()
 
 sample_id = min(16, len(df_processed) - 1)
 
 print()
 print(f"{len(df_processed):,} rows with graph features created")
+print(f"Total number of unique graphs: {len(graph_cache):,}")
+
+# Molecule features
+
+from src.data.features_mol import add_molecule_metadata
+
+MOLECULE_CATEGORICAL_COLS = [
+    "is_salt",
+    "has_metal",
+    "is_single_node",
+]
+
+MOLECULE_NUMERICAL_COLS = [
+    "fragment_count",
+    # "mol_weight",
+    "log10_mol_weight",
+    # "logp",
+    # "tpsa",
+    # "log10_tpsa_plus1",
+    # "h_bond_donor_count",
+    # "h_bond_acceptor_count",
+    # "heavy_atom_count",
+    # "log10_heavy_atom_count_plus1",
+    # "hetero_atom_count",
+    # "halogen_count",
+    # "metal_count",
+    # "transition_metal_count",
+    # "ring_count",
+    # "aromatic_ring_count",
+    # "rotatable_bond_count",
+    "formal_charge",
+]
+
+# Add molecule-level metadata for categorical and numerical encoders
+df_processed = add_molecule_metadata(df_processed, categorical_cols=MOLECULE_CATEGORICAL_COLS, numerical_cols=MOLECULE_NUMERICAL_COLS)
 
 
-# ## Embeddings
-
-# In[5]:
-
+# Encode features
 
 USE_PRETRAINED_TAXID = True
 PRETRAINED_TAXID_PATH = PROJECT_ROOT / "Data" / "moredata" / "pretrained_tax_emb.pkl.zip"
 print(f"Pretrained taxid path: {PRETRAINED_TAXID_PATH}")
 
-tax_embedding = {}
-df_tax = pd.DataFrame(index=df_processed.index)
 config_tax = {}
 
 # Categorical encoding
-categorical_cols = [
+exp_categorical_cols = [
     "species_group",
     "conc_unit",
     "endpoint", 
-    "effect", 
-    "is_salt",
-    "has_metal",
-    "is_single_node",
-    ]
+    "effect"
+]
 
-df_categorical = df_processed[categorical_cols].copy()
-df_categorical, categorical_encoder = sequential_encoder(df_categorical, categorical_cols)
+CATEGORICAL_COLS = exp_categorical_cols + MOLECULE_CATEGORICAL_COLS
+
+df_categorical = df_processed[CATEGORICAL_COLS].copy()
+df_categorical, categorical_encoder = sequential_encoder(df_categorical, CATEGORICAL_COLS)
 # df_categorical now contains only the sequential data for selected columns
 
-config_categorical = build_config(df_categorical, categorical_cols)
+config_categorical = build_config(df_categorical, CATEGORICAL_COLS)
 
 species_group_decoder = {encoded: original for original, encoded in categorical_encoder["species_group"].items()}
 
 print("Categorical embedding config:")
 print(config_categorical)
-print()
 
-# Numerical encoding 
-numerical_cols = [
-    "duration",
-    "fragment_count",
-]
-
-print("Numerical encoding for:")
-print(numerical_cols)
+NUMERICAL_COLS = MOLECULE_NUMERICAL_COLS
 
 
-# # Build The Final Graph Dataset
-# 
+# Appebd metadata to graphs
 
-# In[6]:
-
-
-features = build_graph_features(
-    df_processed, 
-    df_tax, 
-    tax_embedding, 
+from src.data.graph_building import build_graphs
+graphs = build_graphs(
+    df_processed,  
     df_categorical,
-    categorical_cols,
-    numerical_cols
+    CATEGORICAL_COLS,
+    NUMERICAL_COLS,
     )
 
-sample_feature = features[sample_id]
+sample_graph = graphs[sample_id]
 
-print(f"Graph objects created: {len(features):,}")
+print(f"Graph objects created: {len(graphs):,}")
 print()
-print("Info for a sample:")
-print(features[sample_id])
+print("Info for a sample graph:")
+print(graphs[sample_id])
 
 
 # # Prepare for training
 
-# ## Split data
-
-# In[7]:
-
+# Split data
 
 from sklearn.model_selection import GroupKFold
-from src.data.splitting import load_butina_clusters, _build_dataset
+from src.data.splitting import load_butina_clusters, _build_dataset, butina_group_key
 
 cluster_csv_path = PROJECT_ROOT / "Data" / "moredata" / "original" / "butina_cluster_lookup.csv"
 cluster_col = "Cluster_at_cutoff_0.2"
@@ -249,19 +260,8 @@ folds = 5
 
 smiles_to_cluster = load_butina_clusters(cluster_csv_path, cluster_col)
 
-def butina_group_key(smiles):
-    cluster_id = smiles_to_cluster.get(smiles, np.nan)
-
-    if pd.isna(cluster_id):
-        return f"__missing__::{smiles}"
-    
-    if isinstance(cluster_id, float) and cluster_id.is_integer():
-        cluster_id = int(cluster_id)
-
-    return f"cluster::{cluster_id}"
-
 groups = pd.Series(
-    [butina_group_key(graph.smiles) for graph in features],
+    [butina_group_key(graph.smiles, smiles_to_cluster) for graph in graphs],
     name="butina_group"
 )
 
@@ -272,28 +272,23 @@ print(f"Fallback missing-cluster groups: {groups.str.startswith('__missing__::')
 
 group_kfold = GroupKFold(n_splits=folds)
 
-splits = list(group_kfold.split(features, groups=groups))
+splits = list(group_kfold.split(graphs, groups=groups))
 
-train_idx, val_idx = splits[0]
+train_idx, val_idx = splits[fold_id]
 
-train_dataset = _build_dataset(features, train_idx)
-val_dataset = _build_dataset(features, val_idx)
+train_dataset = _build_dataset(graphs, train_idx)
+val_dataset = _build_dataset(graphs, val_idx)
 test_dataset = None
 
-show_split_info(train_dataset, val_dataset)
 
 
-# ## Build DataLoaders
-# 
-
-# In[8]:
-
-
+# Build DataLoaders
 attribute = "species_group"
 
 train_loader = LoadData(
     dataset=train_dataset, 
     batch_size=BATCH_SIZE, 
+    sampler_type="weighted",
     shuffle=False, 
     attribute=attribute
 )
@@ -301,6 +296,7 @@ train_loader = LoadData(
 val_loader = LoadData(
     dataset=val_dataset, 
     batch_size=BATCH_SIZE, 
+    sampler_type="sequential",
     shuffle=False, 
     attribute=attribute,
     target_dataset=train_dataset
@@ -311,50 +307,44 @@ if test_dataset is not None:
     test_loader = LoadData(
         dataset=test_dataset, 
         batch_size=BATCH_SIZE, 
+        sampler_type="sequential",
         shuffle=False, 
         attribute=attribute,
         target_dataset=train_dataset
     )
 
-show_loader_info(attribute, train_loader, val_loader, test_loader, species_group_decoder)
-
-display_sampling_effect(train_dataset, train_loader, "species_group", species_group_decoder)
-
-
 # # Model and training
-# 
 
-# ## Build model
+# Build model
 
-# In[9]:
-
-
-from src.models.gcn import GCN
-from src.models.afp_flex import AFPFlex
+from src.models.pna import PNA, PNA_1_5M_CONFIG, compute_pna_degree_histogram
+from src.models.fragVirtualComboPNAInit import FragVirtualComboPNAInit
 from src.models.toxicity_model import ToxicityModel
-from src.models.meta_encoder import MetaEncoder, TaxonomyEncoder, TaxonomyOneHot
+from src.models.meta_encoder import MetaEncoder, TaxonomyOneHot
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 ########## MODEL HYPERPARAMETERS ##########
 
 PRETRAINED_TAX_DIM = 768 # 768 is the length of the vectors in pretrained_tax_emb.pkl.zip
-PRETRAINED_TAXID_OUTPUT_DIM = 128
+PRETRAINED_TAXID_OUTPUT_DIM = 64
 CATEGORICAL_DIM = 16
 NUMERIC_DIM = 16
 META_DROPOUT = 0.3
 
-GNN_HIDDEN_DIM = 512
-GNN_OUT_DIM = 512
+GNN_HIDDEN_DIM = 64
+TOWERS = 4
+GNN_OUT_DIM = 64
 
-NUM_LAYERS = 3
-NUM_TIMESTEPS = 2
+NUM_LAYERS = 2
+NUM_TIMESTEPS = 1
 DROPOUT = 0.3
 
 FINAL_HIDDEN_DIM = 64
 
-ATOM_FEATURE_DIM = features[0].x.shape[1]
-EDGE_FEATURE_DIM = features[0].edge_attr.shape[1]
+ATOM_FEATURE_DIM = graphs[0].x.shape[1]
+EDGE_FEATURE_DIM = graphs[0].edge_attr.shape[1]
+VIRTUAL_EDGE_FEATURE_DIM = graphs[0].virtual_edge_attr.shape[1] if hasattr(graphs[0], "virtual_edge_attr") else 0
 
 def build_model():
     meta_encoder = MetaEncoder(
@@ -363,29 +353,27 @@ def build_model():
         pretrained_taxid_output_dim=PRETRAINED_TAXID_OUTPUT_DIM,
         config_categorical=config_categorical,
         categorical_output_dim=CATEGORICAL_DIM,
-        numerical_columns=numerical_cols,
+        numerical_columns=NUMERICAL_COLS,
         numeric_output_dim=NUMERIC_DIM,
         dropout=META_DROPOUT
     ).to(device)
 
     # meta_encoder = None
 
-    # model_gnn = AFPFlex(
-    #     in_channels=ATOM_FEATURE_DIM,
-    #     edge_dim=EDGE_FEATURE_DIM,
-    #     hidden_channels=GNN_HIDDEN_DIM,
-    #     out_channels=GNN_OUT_DIM,
-    #     num_layers=NUM_LAYERS,
-    #     num_timesteps=NUM_TIMESTEPS,
-    #     dropout=DROPOUT,
-    # ).to(device)
+    pna_deg = compute_pna_degree_histogram(train_dataset)
 
-    model_gnn = GIN(            
-            mol_dim=ATOM_FEATURE_DIM,
-            edge_dim=EDGE_FEATURE_DIM,
-            num_layers=3,
-            hidden_dim=GNN_HIDDEN_DIM,
-            output_dim=GNN_OUT_DIM)
+    model_gnn = FragVirtualComboPNAInit(
+        in_channels=ATOM_FEATURE_DIM,
+        edge_dim=EDGE_FEATURE_DIM,
+        virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
+        hidden_dim=GNN_HIDDEN_DIM,
+        towers=TOWERS,
+        deg=pna_deg,
+        out_dim=GNN_OUT_DIM,
+        num_layers=NUM_LAYERS,
+        num_timesteps=NUM_TIMESTEPS,
+        dropout=DROPOUT,
+    ).to(device)
 
     # model_gnn = None
 
@@ -413,11 +401,7 @@ print()
 print(model)
 
 
-# ## Train The Model
-# 
-
-# In[77]:
-
+# Train The Model
 
 epochs = 100
 learning_rate = 3e-4
@@ -430,33 +414,15 @@ BATCH_SIZE = globals().get("BATCH_SIZE", 256)
 attribute = globals().get("attribute", "species_group")
 
 wandb_run = None
-
+fold_id = 0
 print(f"at fold {fold_id}")
 
 train_idx, val_idx = splits[fold_id]
 
-train_dataset = _build_dataset(features, train_idx)
-val_dataset = _build_dataset(features, val_idx)
+train_dataset = _build_dataset(graphs, train_idx)
+val_dataset = _build_dataset(graphs, val_idx)
 test_dataset = None
 
-train_loader = LoadData(
-    dataset=train_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=False,
-    attribute=attribute,
-)
-
-val_loader = LoadData(
-    dataset=val_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=False,
-    attribute=attribute,
-    target_dataset=train_dataset,
-)
-
-test_loader = None
-
-model, meta_encoder, model_gnn, n_params_meta, n_params_gnn, n_params_total, gnn_name = build_model()
 loss_fn = torch.nn.SmoothL1Loss(beta=loss_beta)
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -472,11 +438,11 @@ if USE_WANDB:
         project="gnn-thesis",
         entity="elonvg-chalmers-university-of-technology",
         job_type="train",
-        group=f"{gnn_name}-groupkfold-{random_state}",   # same for all folds
+        group=f"{gnn_name}-groupkfold-seed:{seed}",   # same for all folds
         name=f"{gnn_name}-fold-{fold_id}",               # unique per fold
         tags=["notebook", gnn_name],
         config={
-            "random_state": random_state,
+            "random_state": seed,
             "n_samples": N_SAMPLES,
             "fold": fold_id,
             "folds": folds,
@@ -494,10 +460,9 @@ if USE_WANDB:
             "num_atom_features": ATOM_FEATURE_DIM,
             "num_bond_features": EDGE_FEATURE_DIM,
 
-            "tax_embedding": tax_embedding,
             "use_pretrained_taxid": USE_PRETRAINED_TAXID,
-            "categorical_cols": categorical_cols,
-            "numerical_cols": numerical_cols,
+            "categorical_cols": CATEGORICAL_COLS,
+            "numerical_cols": NUMERICAL_COLS,
 
             # "split_method": split_method,
             "butina_cluster_col": cluster_col,
@@ -510,13 +475,14 @@ if USE_WANDB:
 
             "batch_size": BATCH_SIZE,
             "taxonomy_encoder": TaxonomyOneHot.__name__,
-            "gnn_model": gnn_name,
+            "gnn_model": f"{gnn_name}-goodtest",
             "pretrained_tax_dim": PRETRAINED_TAX_DIM,
             "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
             "categorical_dim": CATEGORICAL_DIM,
             "numeric_dim": NUMERIC_DIM,
             "meta_dropout": META_DROPOUT,
             "gnn_hidden_dim": GNN_HIDDEN_DIM,
+            "gnn_towers": TOWERS,
             "gnn_out_dim": GNN_OUT_DIM,
             "num_layers": NUM_LAYERS,
             "num_timesteps": NUM_TIMESTEPS,
@@ -561,7 +527,7 @@ model_trained, history = train(
     device=device,
     early_stopping_patience=early_stopping_patience,
     early_stopping_min_delta=early_stopping_min_delta,
-    record_categories=categorical_cols,
+    record_categories=CATEGORICAL_COLS,
     record_joint_categories=("endpoint", "species_group"),
     label_encoder=categorical_encoder,
     run=wandb_run,
@@ -572,17 +538,3 @@ model = model_trained
 if wandb_run is not None:
     wandb_run.finish()
     wandb_run = None
-
-# plot_training(history["history_all"])
-
-# plot_training_metrics(history["history_all"])
-
-
-# ### Wandb finish
-
-# In[15]:
-
-
-if wandb_run is not None:
-    wandb_run.finish()
-

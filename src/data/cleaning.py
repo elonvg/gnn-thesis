@@ -578,7 +578,4 @@ def process_data(
     else:
         df_processed = df_processed.reset_index(drop=True)
 
-    # Add molecule-level metadata for categorical and numerical encoders.
-    df_processed = add_molecule_metadata(df_processed)
-
     return df_processed

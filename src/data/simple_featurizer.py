@@ -580,12 +580,6 @@ def simple_featurizer(
     add_virtual_edges: bool = True,
     max_virtual_context_atoms: int = 3,
 ):
-    """Build a PyG graph with mixed categorical and numeric chemistry features.
-
-    Categorical specs are one-hot encoded. Numeric specs are scaled continuous
-    values, with optional missing indicators for descriptors such as
-    electronegativity.
-    """
 
     RDLogger.DisableLog("rdApp.*")
 

@@ -176,7 +176,7 @@ from src.data.cleaning import (  # noqa: E402
     preprocess,
     print_mol_types,
 )
-from src.data.featurization import simple_featurizer  # noqa: E402
+from src.data.simple_featurizer import simple_featurizer  # noqa: E402
 from src.data.graph_building import build_graph_features  # noqa: E402
 from src.data.io import load_data  # noqa: E402
 from src.data.metadata import build_config, sequential_encoder  # noqa: E402
