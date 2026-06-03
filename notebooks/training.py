@@ -327,20 +327,20 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 ########## MODEL HYPERPARAMETERS ##########
 
 PRETRAINED_TAX_DIM = 768 # 768 is the length of the vectors in pretrained_tax_emb.pkl.zip
-PRETRAINED_TAXID_OUTPUT_DIM = 64
-CATEGORICAL_DIM = 16
-NUMERIC_DIM = 16
+PRETRAINED_TAXID_OUTPUT_DIM = 256
+CATEGORICAL_DIM = 128
+NUMERIC_DIM = 128
 META_DROPOUT = 0.3
 
-GNN_HIDDEN_DIM = 64
+GNN_HIDDEN_DIM = 256
+GNN_OUT_DIM = 256
 TOWERS = 4
-GNN_OUT_DIM = 64
 
-NUM_LAYERS = 2
-NUM_TIMESTEPS = 1
+NUM_LAYERS = 3
+NUM_TIMESTEPS = 2
 DROPOUT = 0.3
 
-FINAL_HIDDEN_DIM = 64
+FINAL_HIDDEN_DIM = 512
 
 ATOM_FEATURE_DIM = graphs[0].x.shape[1]
 EDGE_FEATURE_DIM = graphs[0].edge_attr.shape[1]
@@ -414,7 +414,7 @@ BATCH_SIZE = globals().get("BATCH_SIZE", 256)
 attribute = globals().get("attribute", "species_group")
 
 wandb_run = None
-fold_id = 0
+
 print(f"at fold {fold_id}")
 
 train_idx, val_idx = splits[fold_id]
@@ -423,8 +423,8 @@ train_dataset = _build_dataset(graphs, train_idx)
 val_dataset = _build_dataset(graphs, val_idx)
 test_dataset = None
 
-loss_fn = torch.nn.SmoothL1Loss(beta=loss_beta)
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+loss_fn = torch.nn.L1Loss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer,
     mode="min",
