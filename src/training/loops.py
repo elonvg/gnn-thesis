@@ -1,4 +1,5 @@
 import copy
+from contextlib import nullcontext
 
 import pandas as pd
 import torch
@@ -13,6 +14,48 @@ from .metrics import regression_metrics
 
 METRIC_NAMES = ("loss", "rmse", "mean_ae", "median_ae")
 SPLIT_PREFIXES = ("train", "val", "test")
+
+
+def _amp_dtype_from_name(dtype):
+    if isinstance(dtype, torch.dtype):
+        return dtype
+
+    dtype_name = str(dtype).lower().replace("torch.", "")
+    if dtype_name in {"float16", "fp16", "half"}:
+        return torch.float16
+    if dtype_name in {"bfloat16", "bf16"}:
+        return torch.bfloat16
+
+    raise ValueError(
+        "amp_dtype must be one of: 'float16', 'fp16', 'bfloat16', 'bf16'."
+    )
+
+
+def _autocast_context(device, enabled=False, dtype=torch.float16):
+    if not enabled:
+        return nullcontext()
+
+    device_type = torch.device(device).type
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        try:
+            return torch.amp.autocast(device_type=device_type, dtype=dtype)
+        except TypeError:
+            return torch.amp.autocast(device_type, dtype=dtype)
+
+    return torch.cuda.amp.autocast(dtype=dtype)
+
+
+def _make_grad_scaler(enabled):
+    if not enabled:
+        return None
+
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        try:
+            return torch.amp.GradScaler(device="cuda", enabled=True)
+        except TypeError:
+            pass
+
+    return torch.cuda.amp.GradScaler(enabled=True)
 
 
 def predict_df(model, loader, device, cols=None):
@@ -82,7 +125,16 @@ def _collect_eval_outputs(model, loader, loss_fn, device, cols=None):
     return results
 
 
-def train_epoch(model, loader, optimizer, loss_fn, device):
+def train_epoch(
+    model,
+    loader,
+    optimizer,
+    loss_fn,
+    device,
+    mixed_precision=False,
+    amp_dtype=torch.float16,
+    scaler=None,
+):
     model.train()
     total_loss = 0
 
@@ -90,10 +142,17 @@ def train_epoch(model, loader, optimizer, loss_fn, device):
         batch = batch.to(device)
         optimizer.zero_grad(set_to_none=True)
 
-        out = model(batch).view(-1)
-        loss = loss_fn(out, batch.y.view(-1))
-        loss.backward()
-        optimizer.step()
+        with _autocast_context(device, enabled=mixed_precision, dtype=amp_dtype):
+            out = model(batch).view(-1)
+            loss = loss_fn(out, batch.y.view(-1))
+
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
 
         total_loss += loss.item()
 
@@ -580,8 +639,14 @@ def train(
     record_joint_categories=None,
     label_encoder=None,
     run=None,
+    mixed_precision=False,
+    amp_dtype="float16",
 ):
+    device = torch.device(device)
     model = model.to(device)
+    amp_dtype = _amp_dtype_from_name(amp_dtype)
+    amp_enabled = bool(mixed_precision) and device.type == "cuda"
+    scaler = _make_grad_scaler(amp_enabled and amp_dtype == torch.float16)
 
     if loss_fn is None or optimizer is None:
         raise ValueError("loss_fn and optimizer must both be provided.")
@@ -622,7 +687,16 @@ def train(
 
     try:
         for epoch in epoch_iterator:
-            train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device)
+            train_loss = train_epoch(
+                model,
+                train_loader,
+                optimizer,
+                loss_fn,
+                device,
+                mixed_precision=amp_enabled,
+                amp_dtype=amp_dtype,
+                scaler=scaler,
+            )
             history["history_all"]["train_loss"].append(train_loss)
             should_evaluate = _should_run_interval(epoch, epochs, eval_every)
             should_log = log_every != 0 and _should_run_interval(epoch, epochs, log_every)

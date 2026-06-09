@@ -422,6 +422,8 @@ early_stopping_min_delta = 1e-4
 record_categories = ["species_group", "endpoint", "effect", "conc_unit"]
 BATCH_SIZE = globals().get("BATCH_SIZE", 1024)
 attribute = globals().get("attribute", "species_group")
+mixed_precision = device.type == "cuda"
+amp_dtype = "float16"
 
 wandb_run = None
 
@@ -502,6 +504,8 @@ if USE_WANDB:
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "loss": loss_fn.__class__.__name__,
+            "mixed_precision": mixed_precision,
+            "amp_dtype": amp_dtype,
             "early_stopping_patience": early_stopping_patience,
             "early_stopping_min_delta": early_stopping_min_delta,
         },
@@ -520,6 +524,8 @@ print(f"epochs = {epochs}")
 print(f"learning_rate = {learning_rate}")
 print(f"weight_decay = {weight_decay}")
 print(f"loss = {loss_fn.__class__.__name__}")
+print(f"mixed_precision = {mixed_precision}")
+print(f"amp_dtype = {amp_dtype}")
 print(f"early_stopping_patience = {early_stopping_patience}")
 
 model_trained, history = train(
@@ -539,6 +545,8 @@ model_trained, history = train(
     label_encoder=categorical_encoder,
     eval_every=2,
     run=wandb_run,
+    mixed_precision=mixed_precision,
+    amp_dtype=amp_dtype,
 )
 
 model = model_trained
