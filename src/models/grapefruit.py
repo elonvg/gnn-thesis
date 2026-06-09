@@ -84,7 +84,7 @@ def build_fragment_complete_graph(frag_to_mol):
 
     return torch.cat(edges, dim=1)
 
-class FragVirtualComboPNAInit(nn.Module):
+class Grapefruit(nn.Module):
 
     def __init__(
             self,
@@ -135,7 +135,7 @@ class FragVirtualComboPNAInit(nn.Module):
                     negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
         
         self.virtual_gate = nn.Sequential(
-            Linear(2* hidden_dim, hidden_dim),
+            Linear(2 * hidden_dim, hidden_dim),
             nn.Sigmoid()
         )
         
@@ -147,10 +147,10 @@ class FragVirtualComboPNAInit(nn.Module):
         self.atom_gats = nn.ModuleList() 
         self.atom_grus = nn.ModuleList()
         for _ in range(num_layers - 1):
-            gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
+            gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout, heads=3,
                              add_self_loops=False, negative_slope=0.01)
             
-            gru = GRUCell(hidden_dim, hidden_dim)
+            gru = GRUCell(3 * hidden_dim, hidden_dim)
 
             self.atom_gats.append(gat)
             self.atom_grus.append(gru)  

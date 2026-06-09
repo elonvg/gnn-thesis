@@ -31,8 +31,8 @@ torch.cuda.manual_seed_all(args.seed)
 USE_WANDB = True
 n_folds = 5
 
-N_SAMPLES = 1000
-# N_SAMPLES = None
+# N_SAMPLES = 1000
+N_SAMPLES = None
 
 BATCH_SIZE = 1024
 
@@ -256,8 +256,6 @@ from src.data.splitting import load_butina_clusters, _build_dataset, butina_grou
 cluster_csv_path = PROJECT_ROOT / "Data" / "moredata" / "original" / "butina_cluster_lookup.csv"
 cluster_col = "Cluster_at_cutoff_0.2"
 
-folds = 5
-
 smiles_to_cluster = load_butina_clusters(cluster_csv_path, cluster_col)
 
 groups = pd.Series(
@@ -270,7 +268,7 @@ print(f"Unique groups: {groups.nunique():,}")
 print(f"Missing group values: {groups.isna().sum():,}")
 print(f"Fallback missing-cluster groups: {groups.str.startswith('__missing__::').sum():,}")
 
-group_kfold = GroupKFold(n_splits=folds)
+group_kfold = GroupKFold(n_splits=n_folds)
 
 splits = list(group_kfold.split(graphs, groups=groups))
 
@@ -318,29 +316,29 @@ if test_dataset is not None:
 # Build model
 
 from src.models.pna import PNA, PNA_1_5M_CONFIG, compute_pna_degree_histogram
-from src.models.fragVirtualComboPNAInit import FragVirtualComboPNAInit
 from src.models.toxicity_model import ToxicityModel
 from src.models.meta_encoder import MetaEncoder, TaxonomyOneHot
+from src.models.grapefruit import Grape
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 ########## MODEL HYPERPARAMETERS ##########
 
 PRETRAINED_TAX_DIM = 768 # 768 is the length of the vectors in pretrained_tax_emb.pkl.zip
-PRETRAINED_TAXID_OUTPUT_DIM = 256
+PRETRAINED_TAXID_OUTPUT_DIM = 512
 CATEGORICAL_DIM = 128
 NUMERIC_DIM = 128
 META_DROPOUT = 0.3
 
 GNN_HIDDEN_DIM = 256
-GNN_OUT_DIM = 256
+GNN_OUT_DIM = 512
 TOWERS = 4
 
-NUM_LAYERS = 3
-NUM_TIMESTEPS = 2
+NUM_LAYERS = 4
+NUM_TIMESTEPS = 3
 DROPOUT = 0.3
 
-FINAL_HIDDEN_DIM = 512
+FINAL_HIDDEN_DIM = 1024
 
 ATOM_FEATURE_DIM = graphs[0].x.shape[1]
 EDGE_FEATURE_DIM = graphs[0].edge_attr.shape[1]
@@ -362,7 +360,20 @@ def build_model():
 
     pna_deg = compute_pna_degree_histogram(train_dataset)
 
-    model_gnn = FragVirtualComboPNAInit(
+    # model_gnn = FragVirtualComboPNAInit(
+    #     in_channels=ATOM_FEATURE_DIM,
+    #     edge_dim=EDGE_FEATURE_DIM,
+    #     virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
+    #     hidden_dim=GNN_HIDDEN_DIM,
+    #     towers=TOWERS,
+    #     deg=pna_deg,
+    #     out_dim=GNN_OUT_DIM,
+    #     num_layers=NUM_LAYERS,
+    #     num_timesteps=NUM_TIMESTEPS,
+    #     dropout=DROPOUT,
+    # ).to(device)
+
+    model_gnn = Grape(
         in_channels=ATOM_FEATURE_DIM,
         edge_dim=EDGE_FEATURE_DIM,
         virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
@@ -403,25 +414,18 @@ print(model)
 
 # Train The Model
 
-epochs = 100
+epochs = 120
 learning_rate = 3e-4
 weight_decay = 1e-4
-loss_beta = 0.5
-early_stopping_patience = 30
+early_stopping_patience = 100
 early_stopping_min_delta = 1e-4
 record_categories = ["species_group", "endpoint", "effect", "conc_unit"]
-BATCH_SIZE = globals().get("BATCH_SIZE", 256)
+BATCH_SIZE = globals().get("BATCH_SIZE", 1024)
 attribute = globals().get("attribute", "species_group")
 
 wandb_run = None
 
 print(f"at fold {fold_id}")
-
-train_idx, val_idx = splits[fold_id]
-
-train_dataset = _build_dataset(graphs, train_idx)
-val_dataset = _build_dataset(graphs, val_idx)
-test_dataset = None
 
 loss_fn = torch.nn.L1Loss()
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -445,7 +449,7 @@ if USE_WANDB:
             "random_state": seed,
             "n_samples": N_SAMPLES,
             "fold": fold_id,
-            "folds": folds,
+            "folds": n_folds,
             "train_size": len(train_dataset),
             "val_size": len(val_dataset),
 
@@ -459,6 +463,10 @@ if USE_WANDB:
             
             "num_atom_features": ATOM_FEATURE_DIM,
             "num_bond_features": EDGE_FEATURE_DIM,
+            "atom_features": ATOM_FEATURES,
+            "bond_features": BOND_FEATURES,
+            "mol_categorical_cols": MOLECULE_CATEGORICAL_COLS,
+            "mol_numerical_cols": MOLECULE_NUMERICAL_COLS,
 
             "use_pretrained_taxid": USE_PRETRAINED_TAXID,
             "categorical_cols": CATEGORICAL_COLS,
@@ -475,7 +483,7 @@ if USE_WANDB:
 
             "batch_size": BATCH_SIZE,
             "taxonomy_encoder": TaxonomyOneHot.__name__,
-            "gnn_model": f"{gnn_name}-goodtest",
+            "gnn_model": f"{gnn_name}-11M",
             "pretrained_tax_dim": PRETRAINED_TAX_DIM,
             "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
             "categorical_dim": CATEGORICAL_DIM,
@@ -494,7 +502,6 @@ if USE_WANDB:
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "loss": loss_fn.__class__.__name__,
-            "loss_beta": loss_beta,
             "early_stopping_patience": early_stopping_patience,
             "early_stopping_min_delta": early_stopping_min_delta,
         },
@@ -527,9 +534,10 @@ model_trained, history = train(
     device=device,
     early_stopping_patience=early_stopping_patience,
     early_stopping_min_delta=early_stopping_min_delta,
-    record_categories=CATEGORICAL_COLS,
+    record_categories=record_categories,
     record_joint_categories=("endpoint", "species_group"),
     label_encoder=categorical_encoder,
+    eval_every=2,
     run=wandb_run,
 )
 

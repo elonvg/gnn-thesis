@@ -10,6 +10,8 @@ from io import BytesIO
 from PIL import Image
 from matplotlib import cm, colors
 import math
+from rdkit import Chem
+import pandas as pd
 
 import torch
 
@@ -242,3 +244,314 @@ def draw_atom_heatmap_grid(
 
     plt.savefig("atom_heatmap_grid.png", bbox_inches="tight", dpi=150)
     plt.show()
+
+
+
+from src.data.features_graph import (
+    ALL_ATOM_FEATURES,
+    CategoricalFeature,
+    NumericFeature,
+)
+
+pt = Chem.GetPeriodicTable()
+
+def choice_label(feature_name, value):
+    if feature_name == "atomic_num":
+        return f"{pt.GetElementSymbol(int(value))} ({int(value)})"
+    if feature_name == "formal_charge":
+        return f"{int(value):+d}"
+    return str(value).split(".")[-1]
+
+def build_atom_feature_index(atom_features):
+    rows = []
+    blocks = []
+    col = 0
+
+    for feature_name in atom_features:
+        spec = ALL_ATOM_FEATURES[feature_name]
+        start = col
+
+        if isinstance(spec, CategoricalFeature):
+            for choice in spec.choices:
+                rows.append({
+                    "column": col,
+                    "feature_group": feature_name,
+                    "encoded_feature": f"{feature_name}={choice_label(feature_name, choice)}",
+                })
+                col += 1
+
+            if spec.include_unknown:
+                rows.append({
+                    "column": col,
+                    "feature_group": feature_name,
+                    "encoded_feature": f"{feature_name}=unknown",
+                })
+                col += 1
+
+        elif isinstance(spec, NumericFeature):
+            rows.append({
+                "column": col,
+                "feature_group": feature_name,
+                "encoded_feature": feature_name,
+            })
+            col += 1
+
+            if spec.include_missing:
+                rows.append({
+                    "column": col,
+                    "feature_group": feature_name,
+                    "encoded_feature": f"{feature_name}=missing",
+                })
+                col += 1
+
+        blocks.append({
+            "feature_group": feature_name,
+            "start_col": start,
+            "end_col": col - 1,
+            "n_columns": col - start,
+        })
+
+    return pd.DataFrame(rows), pd.DataFrame(blocks)
+
+def plot_node_feature_importance(
+    explanation,
+    graph,
+    feature_index,
+    top_n=25,
+    figsize=(16, 7),
+):
+    feature_index = feature_index.copy()
+
+    node_mask = explanation.node_mask.detach().cpu().numpy()
+    x = graph.x.detach().cpu().numpy()
+
+    feature_index["mask_sum"] = node_mask.sum(axis=0)
+    feature_index["active_mask_sum"] = (node_mask * (x != 0)).sum(axis=0)
+    feature_index["weighted_sum"] = (node_mask * np.abs(x)).sum(axis=0)
+
+    grouped_importance = (
+        feature_index
+        .groupby("feature_group", sort=False)
+        .agg(
+            importance=("active_mask_sum", "sum"),
+            mean_mask=("mask_sum", "mean"),
+            n_columns=("column", "count"),
+        )
+        .reset_index()
+    )
+
+    group_plot_df = grouped_importance.sort_values("importance")
+    encoded_plot_df = feature_index.sort_values("active_mask_sum").tail(top_n)
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    axes[0].barh(group_plot_df["feature_group"], group_plot_df["importance"])
+    axes[0].set_xlabel("Grouped GNNExplainer importance")
+    axes[0].set_ylabel("Atom feature group")
+    axes[0].set_title("Importance by feature group")
+
+    axes[1].barh(encoded_plot_df["encoded_feature"], encoded_plot_df["active_mask_sum"])
+    axes[1].set_xlabel("GNNExplainer importance")
+    axes[1].set_ylabel("Encoded atom feature")
+    axes[1].set_title(f"Top {top_n} encoded node features")
+
+    plt.tight_layout()
+    plt.show()
+
+    return feature_index, grouped_importance
+
+from torch_geometric.data import Batch
+
+def predict_with_atom_mask(model, graph, atom_mask, baseline_x):
+    masked_graph = graph.clone()
+
+    keep = atom_mask[:, None]
+
+    masked_graph.x = torch.where(
+        keep,
+        graph.x,
+        baseline_x,
+    )
+
+    # Important: full model expects batched graph-level metadata.
+    if hasattr(masked_graph, "batch"):
+        del masked_graph.batch
+
+    batch = Batch.from_data_list([masked_graph]).to(graph.x.device)
+
+    with torch.no_grad():
+        return model(batch).view(-1)[0].item()
+    
+
+def atom_shapley_random(model, graph, n_samples=500, p=0.5):
+    model.eval()
+
+    num_atoms = graph.x.size(0)
+
+    # Simple baseline: all-zero atom features
+    # Better later: dataset mean atom features
+    baseline_x = torch.zeros_like(graph.x)
+
+    shapley = torch.zeros(num_atoms, device=graph.x.device)
+    counts = torch.zeros(num_atoms, device=graph.x.device)
+
+    for _ in range(n_samples):
+        # Random coalition S
+        coalition = torch.rand(num_atoms, device=graph.x.device) < p
+
+        for atom_idx in range(num_atoms):
+            if coalition[atom_idx]:
+                continue
+
+            without_i = coalition.clone()
+            with_i = coalition.clone()
+            with_i[atom_idx] = True
+
+            pred_without = predict_with_atom_mask(
+                model, graph, without_i, baseline_x
+            )
+
+            pred_with = predict_with_atom_mask(
+                model, graph, with_i, baseline_x
+            )
+
+            marginal_effect = pred_with - pred_without
+
+            shapley[atom_idx] += marginal_effect
+            counts[atom_idx] += 1
+
+    shapley = shapley / counts.clamp_min(1)
+
+    return shapley
+
+def draw_atom_shapley_heatmap_gaussian(
+    smiles,
+    shapley_scores,
+    cmap_name="coolwarm",
+    size=(700, 500),
+    sigma_frac=0.07,
+    alpha=0.70,
+    use_percentile=True,
+    percentile=95,
+    title=None,
+    save_path=None,
+):
+    """
+    Draw a signed atom-level Shapley heatmap.
+
+    Positive scores increase the model prediction.
+    Negative scores decrease the model prediction.
+    For log10c, positive means higher predicted concentration.
+    """
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"Could not parse SMILES: {smiles}")
+
+    rdDepictor.Compute2DCoords(mol)
+
+    if isinstance(shapley_scores, torch.Tensor):
+        atom_scores = shapley_scores.detach().cpu().numpy()
+    else:
+        atom_scores = np.asarray(shapley_scores)
+
+    atom_scores = atom_scores.astype(float).reshape(-1)
+
+    if atom_scores.shape[0] != mol.GetNumAtoms():
+        raise ValueError(
+            f"Expected {mol.GetNumAtoms()} Shapley scores, "
+            f"got {atom_scores.shape[0]}."
+        )
+
+    # Render molecule.
+    try:
+        drawer = rdMolDraw2D.MolDraw2DSVG(*size)
+        opts = drawer.drawOptions()
+        opts.useBWAtomPalette()
+        opts.padding = 0.1
+        drawer.DrawMolecule(mol)
+        drawer.FinishDrawing()
+
+        import cairosvg
+        png_data = cairosvg.svg2png(
+            bytestring=drawer.GetDrawingText().encode(),
+            output_width=size[0],
+            output_height=size[1],
+        )
+        mol_img = np.array(Image.open(BytesIO(png_data)).convert("RGBA")).astype(float) / 255.0
+    except ImportError:
+        drawer = rdMolDraw2D.MolDraw2DCairo(*size)
+        drawer.drawOptions().useBWAtomPalette()
+        drawer.DrawMolecule(mol)
+        drawer.FinishDrawing()
+        mol_img = np.array(Image.open(BytesIO(drawer.GetDrawingText())).convert("RGBA")).astype(float) / 255.0
+
+    H, W = size[1], size[0]
+
+    # Atom coordinates in rendered image space.
+    drawer_tmp = rdMolDraw2D.MolDraw2DCairo(*size)
+    drawer_tmp.drawOptions().useBWAtomPalette()
+    drawer_tmp.DrawMolecule(mol)
+    drawer_tmp.FinishDrawing()
+
+    atom_positions = []
+    for atom_idx in range(mol.GetNumAtoms()):
+        pt = drawer_tmp.GetDrawCoords(atom_idx)
+        atom_positions.append((pt.x, pt.y))
+
+    # Build signed Gaussian field.
+    sigma = sigma_frac * W
+    xs = np.linspace(0, W - 1, W)
+    ys = np.linspace(0, H - 1, H)
+    xx, yy = np.meshgrid(xs, ys)
+
+    field = np.zeros((H, W), dtype=float)
+
+    for score, (px, py) in zip(atom_scores, atom_positions):
+        gaussian = np.exp(-((xx - px) ** 2 + (yy - py) ** 2) / (2 * sigma ** 2))
+        field += float(score) * gaussian
+
+    if use_percentile:
+        limit = np.percentile(np.abs(field), percentile)
+    else:
+        limit = np.max(np.abs(field))
+
+    if limit == 0:
+        limit = 1e-6
+
+    norm = mcolors.TwoSlopeNorm(vmin=-limit, vcenter=0.0, vmax=limit)
+    cmap = cm.get_cmap(cmap_name)
+
+    heat_rgba = cmap(norm(field))
+
+    # Make weak regions transparent, strong positive/negative regions opaque.
+    strength = np.clip(np.abs(field) / limit, 0, 1)
+    heat_rgba[..., 3] = alpha * strength
+
+    fg_alpha = heat_rgba[..., 3:4]
+    composite = heat_rgba[..., :3] * fg_alpha + mol_img[..., :3] * (1 - fg_alpha)
+
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(size[0] / 100, (size[1] + 60) / 100),
+        gridspec_kw={"height_ratios": [size[1], 60], "hspace": 0.03},
+        dpi=100,
+    )
+
+    ax_img, ax_cb = axes
+
+    ax_img.imshow(composite, origin="upper", interpolation="bilinear")
+    ax_img.axis("off")
+    ax_img.set_title(title or smiles, fontsize=13, pad=10)
+
+    sm = cm.ScalarMappable(norm=norm, cmap=cmap)
+    cb = plt.colorbar(sm, cax=ax_cb, orientation="horizontal")
+    cb.set_label("Shapley contribution to prediction", fontsize=10, labelpad=4)
+    cb.ax.tick_params(labelsize=9)
+
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches="tight", dpi=150)
+
+    plt.show()
+
+    return atom_scores
