@@ -318,7 +318,7 @@ if test_dataset is not None:
 from src.models.pna import PNA, PNA_1_5M_CONFIG, compute_pna_degree_histogram
 from src.models.toxicity_model import ToxicityModel
 from src.models.meta_encoder import MetaEncoder, TaxonomyOneHot
-from src.models.grapefruit import Grape
+from src.models.grapefruit import Grapefruit
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -373,7 +373,7 @@ def build_model():
     #     dropout=DROPOUT,
     # ).to(device)
 
-    model_gnn = Grape(
+    model_gnn = Grapefruit(
         in_channels=ATOM_FEATURE_DIM,
         edge_dim=EDGE_FEATURE_DIM,
         virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
@@ -414,7 +414,7 @@ print(model)
 
 # Train The Model
 
-epochs = 120
+epochs = 100
 learning_rate = 3e-4
 weight_decay = 1e-4
 early_stopping_patience = 100
