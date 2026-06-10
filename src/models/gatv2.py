@@ -29,7 +29,7 @@ class GATv2(nn.Module):
             dropout=dropout, 
             )
         
-        self.lin_1 = nn.Linear(hidden_dim, hidden_dim)
+        self.gru1 = nn.GRUCell(hidden_dim, hidden_dim)
         
         self.gatconv2 = GATv2Conv(
             in_channels=hidden_dim,
@@ -37,8 +37,19 @@ class GATv2(nn.Module):
             edge_dim=edge_dim,
             dropout=dropout,
             )
+        
+        self.gru2 = nn.GRUCell(hidden_dim, hidden_dim)
+        
+        self.gatconv3 = GATv2Conv(
+            in_channels=hidden_dim,
+            out_channels=hidden_dim,
+            edge_dim=edge_dim,
+            dropout=dropout,
+            )
+        
+        self.gru3 = nn.GRUCell(hidden_dim, hidden_dim)
 
-        self.lin_out = nn.Linear(hidden_dim, output_dim)
+        self.lin_out = nn.Linear(2 * hidden_dim, output_dim)
 
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
@@ -49,25 +60,34 @@ class GATv2(nn.Module):
         x = F.dropout(x, p=self.dropout, training=self.training)
 
         # Gatv2 layers
-        x = self.gatconv1(x, edge_index, edge_attr)
-        x = F.relu(x)
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        c = self.gatconv1(x, edge_index, edge_attr)
+        c = F.relu(c)
+        c = F.dropout(c, p=self.dropout, training=self.training)
 
-        x = self.lin_1(x)
+        x = self.gru1(c, x)
         x = F.relu(x)
-        x = F.dropout(x, p=self.dropout, training=self.training)
 
-        x = self.gatconv2(x, edge_index, edge_attr)
+        c = self.gatconv2(x, edge_index, edge_attr)
+        c = F.relu(c)
+        c = F.dropout(c, p=self.dropout, training=self.training)
+
+        x = self.gru2(c, x)
         x = F.relu(x)
-        x = F.dropout(x, p=self.dropout, training=self.training)
+
+        c = self.gatconv3(x, edge_index, edge_attr)
+        c = F.relu(c)
+        c = F.dropout(c, p=self.dropout, training=self.training)
+
+        x = self.gru3(c, x)
+        x = F.relu(x)
 
         # Global pooling
         x_mean = global_mean_pool(x, batch)
         # x_max = global_max_pool(x, batch)
-        # x_add = global_add_pool(x, batch)
+        x_add = global_add_pool(x, batch)
 
         # Concatenate pooled features
-        x = torch.cat([x_mean], dim=1)
+        x = torch.cat([x_mean, x_add], dim=1)
 
         x = self.lin_out(x)
 

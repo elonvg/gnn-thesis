@@ -61,7 +61,7 @@ class PNA(nn.Module):
 
     def __init__(
         self,
-        mol_dim=9,
+        in_channels=9,
         edge_dim=3,
         hidden_dim=256,
         output_dim=128,
@@ -82,7 +82,7 @@ class PNA(nn.Module):
         if hidden_dim % towers != 0:
             raise ValueError("hidden_dim must be divisible by towers for PNAConv.")
 
-        self.mol_dim = mol_dim
+        self.in_channels = in_channels
         self.edge_dim = edge_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
@@ -103,7 +103,7 @@ class PNA(nn.Module):
         )
         self.register_buffer("deg", deg_tensor)
 
-        self.lin_in = nn.Linear(mol_dim, hidden_dim)
+        self.lin_in = nn.Linear(in_channels, hidden_dim)
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
 
