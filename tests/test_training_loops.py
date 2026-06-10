@@ -21,6 +21,15 @@ class IdentityRegressionModel(nn.Module):
         return self.linear(batch.y.unsqueeze(-1))
 
 
+class ConstantRegressionModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.bias = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, batch):
+        return self.bias.expand_as(batch.y)
+
+
 def test_evaluate_by_groups_returns_group_metrics():
     loader = [
         LoaderBatch(y=torch.tensor([1.0, 3.0]), species_group=["fish", "algae"]),
@@ -69,3 +78,24 @@ def test_train_records_group_history_for_record_categories():
     assert history["history_species_group"]["history_species_group_group"]["fish"]["train_loss"] == [0.0]
     assert history["history_species_group"]["history_species_group_group"]["fish"]["train_n"] == 2
     assert history["history_species_group"]["history_species_group_group"]["fish"]["val_n"] == 2
+
+
+def test_train_can_keep_final_epoch_model_instead_of_restoring_best():
+    loader = [LoaderBatch(y=torch.tensor([1.0]))]
+    model = ConstantRegressionModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=1.0)
+    loss_fn = nn.MSELoss()
+
+    model, history = train(
+        model,
+        train_loader=loader,
+        val_loader=loader,
+        loss_fn=loss_fn,
+        optimizer=optimizer,
+        epochs=2,
+        device="cpu",
+        restore_best_model=False,
+    )
+
+    assert torch.isclose(model.bias.detach(), torch.tensor(0.0)).item()
+    assert history["history_all"]["restored_best_model"] is False

@@ -585,6 +585,7 @@ def _propagate_history_metadata(history):
         "monitor_name",
         "stopped_early",
         "epochs_ran",
+        "restored_best_model",
     )
     metadata = {key: history["history_all"].get(key) for key in metadata_keys}
 
@@ -641,6 +642,7 @@ def train(
     run=None,
     mixed_precision=False,
     amp_dtype="float16",
+    restore_best_model=True,
 ):
     device = torch.device(device)
     model = model.to(device)
@@ -868,8 +870,10 @@ def train(
         if progress_bar is not None:
             progress_bar.close()
 
-    model.load_state_dict(best_model_state)
     history["history_all"]["epochs_ran"] = len(history["history_all"]["train_loss"])
+    history["history_all"]["restored_best_model"] = bool(restore_best_model)
+    if restore_best_model:
+        model.load_state_dict(best_model_state)
     _propagate_history_metadata(history)
 
     if run is not None:
@@ -880,6 +884,7 @@ def train(
                 "monitor_name": history["history_all"]["monitor_name"],
                 "stopped_early": history["history_all"]["stopped_early"],
                 "epochs_ran": history["history_all"]["epochs_ran"],
+                "restored_best_model": history["history_all"]["restored_best_model"],
             }
         )
 

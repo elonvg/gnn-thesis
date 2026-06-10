@@ -5,7 +5,6 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 import torch
-import matplotlib.pyplot as plt
 
 try:
     from skfp.model_selection import butina_train_test_split
@@ -423,6 +422,7 @@ def butina_split(
 
 
 def show_split_info(train_dataset, val_dataset=None, test_dataset=None):
+    import matplotlib.pyplot as plt
     val_dataset = val_dataset or []
     test_dataset = test_dataset or []
 
