@@ -123,7 +123,7 @@ class GrapefruitSP(nn.Module):
         
         # self.lin2 = Linear(2 * hidden_dim, hidden_dim) # Linear layer to mix GAT and PNA features
 
-        self.gru = GRUCell(2 * hidden_dim, hidden_dim)
+        self.gru = GRUCell(hidden_dim, hidden_dim)
 
         # GAT Layers
         self.atom_gats = nn.ModuleList() 

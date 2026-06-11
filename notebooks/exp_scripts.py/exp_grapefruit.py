@@ -731,7 +731,7 @@ if wandb_run is not None:
 checkpoint_dir = PROJECT_ROOT / "outputs" / "models"
 checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-checkpoint_path = checkpoint_dir / "f{gnn_name}.pt"
+checkpoint_path = checkpoint_dir / f"{gnn_name}.pt"
 
 torch.save(
     {
