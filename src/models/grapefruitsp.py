@@ -188,7 +188,10 @@ class GrapefruitSP(nn.Module):
             vgatc = F.elu(vgatc)
             vgatc = F.dropout(vgatc, p=self.dropout, training=self.training)
 
-        c = torch.cat([gatc, vgatc], dim=-1) # Combine GAT and virtual gat outputs
+            gate = self.virtual_gate(torch.cat([gatc, vgatc], dim=-1)) 
+            gatc = gatc + gate * vgatc # Combine GAT and virtual GAT outputs using the gate
+
+        c = gatc
 
         # Residual update
         x = self.gru(c, x)
