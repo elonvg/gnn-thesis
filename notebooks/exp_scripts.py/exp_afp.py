@@ -36,8 +36,8 @@ torch.cuda.manual_seed_all(args.seed)
 USE_WANDB = True
 n_folds = 5
 
-N_SAMPLES = 100
-# N_SAMPLES = None
+# N_SAMPLES = 100
+N_SAMPLES = None
 
 BATCH_SIZE = 1024
 

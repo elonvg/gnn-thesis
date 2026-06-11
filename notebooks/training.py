@@ -419,7 +419,7 @@ learning_rate = 3e-4
 weight_decay = 1e-4
 early_stopping_patience = 100
 early_stopping_min_delta = 1e-4
-record_categories = ["species_group", "endpoint", "effect", "conc_unit"]
+record_categories = ["species_group", "endpoint", "effect", "conc_unit", "is_single_node" "is_salt", "is_metal"]
 BATCH_SIZE = globals().get("BATCH_SIZE", 1024)
 attribute = globals().get("attribute", "species_group")
 mixed_precision = device.type == "cuda"
@@ -550,6 +550,44 @@ model_trained, history = train(
 )
 
 model = model_trained
+
+checkpoint_dir = PROJECT_ROOT / "outputs" / "models"
+checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+checkpoint_path = checkpoint_dir / "f{gnn_name}.pt"
+
+torch.save(
+    {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "history": history,
+        "best_epoch": history["history_all"]["best_epoch"],
+        "best_monitor_value": history["history_all"]["best_monitor_value"],
+
+        "model_config": {
+            "use_pretrained_taxid": USE_PRETRAINED_TAXID,
+            "pretrained_taxid_path": str(PRETRAINED_TAXID_PATH),
+            "pretrained_tax_dim": PRETRAINED_TAX_DIM,
+            "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
+            "categorical_dim": CATEGORICAL_DIM,
+            "numeric_dim": NUMERIC_DIM,
+            "meta_dropout": META_DROPOUT,
+            "gnn_hidden_dim": GNN_HIDDEN_DIM,
+            "gnn_out_dim": GNN_OUT_DIM,
+            "towers": TOWERS,
+            "num_layers": NUM_LAYERS,
+            "num_timesteps": NUM_TIMESTEPS,
+            "dropout": DROPOUT,
+            "final_hidden_dim": FINAL_HIDDEN_DIM,
+            "atom_feature_dim": ATOM_FEATURE_DIM,
+            "edge_feature_dim": EDGE_FEATURE_DIM,
+            "virtual_edge_feature_dim": VIRTUAL_EDGE_FEATURE_DIM,
+        },
+    },
+    checkpoint_path,
+)
+
+print(f"Saved model to {checkpoint_path}")
 
 if wandb_run is not None:
     wandb_run.finish()
