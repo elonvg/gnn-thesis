@@ -365,11 +365,14 @@ if test_dataset is not None:
 
 # Build model
 
+from src.models.gcn import GCN
+from src.models.gatv2 import GATv2
 from src.models.pna import PNA, PNA_1_5M_CONFIG, compute_pna_degree_histogram
-from src.models.toxicity_model import ToxicityModel
-from src.models.meta_encoder import MetaEncoder, TaxonomyOneHot
-from src.models.attentive_fp import AttentiveFP
 from src.models.grapefruit import Grapefruit
+from src.models.grapefruitsp import GrapefruitSP
+from src.models.toxicity_model import ToxicityModel
+from src.models.attentive_fp import AttentiveFP
+from src.models.meta_encoder import MetaEncoder, TaxonomyEncoder, TaxonomyOneHot
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -411,15 +414,28 @@ def build_model():
 
     pna_deg = compute_pna_degree_histogram(train_dataset)
 
-    model_gnn = AttentiveFP(
+    model_gnn = GrapefruitSP(
         in_channels=ATOM_FEATURE_DIM,
         edge_dim=EDGE_FEATURE_DIM,
-        hidden_channels=GNN_HIDDEN_DIM,
-        out_channels=GNN_OUT_DIM,
+        hidden_dim=GNN_HIDDEN_DIM,
+        out_dim=GNN_OUT_DIM,
         num_layers=NUM_LAYERS,
         num_timesteps=NUM_TIMESTEPS,
         dropout=0.3,
     ).to(device)
+
+    # model_gnn = Grapefruit(
+    #     in_channels=ATOM_FEATURE_DIM,
+    #     edge_dim=EDGE_FEATURE_DIM,
+    #     virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
+    #     hidden_dim=GNN_HIDDEN_DIM,
+    #     towers=TOWERS,
+    #     deg=pna_deg,
+    #     out_dim=GNN_OUT_DIM,
+    #     num_layers=NUM_LAYERS,
+    #     num_timesteps=NUM_TIMESTEPS,
+    #     dropout=DROPOUT,
+    # ).to(device)
 
     # model_gnn = None
 
@@ -523,7 +539,7 @@ run_config = {
     "train_sampler_type": "weighted",
     "val_sampler_type": "sequential",
     "taxonomy_encoder": TaxonomyOneHot.__name__,
-    "gnn_model": f"{gnn_name}-11M",
+    "gnn_model": f"{gnn_name}-10M",
     "pretrained_tax_dim": PRETRAINED_TAX_DIM,
     "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
     "categorical_dim": CATEGORICAL_DIM,

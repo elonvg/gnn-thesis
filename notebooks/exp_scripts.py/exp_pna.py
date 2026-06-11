@@ -469,7 +469,7 @@ learning_rate = 3e-4
 weight_decay = 1e-4
 early_stopping_patience = 100
 early_stopping_min_delta = 1e-4
-record_categories = ["species_group", "endpoint", "effect", "conc_unit"]
+record_categories = ["species_group", "endpoint", "effect", "conc_unit", "is_single_node" "is_salt", "is_metal"]
 BATCH_SIZE = globals().get("BATCH_SIZE", 1024)
 attribute = globals().get("attribute", "species_group")
 mixed_precision = device.type == "cuda"
