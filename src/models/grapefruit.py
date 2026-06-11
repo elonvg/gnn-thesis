@@ -166,8 +166,8 @@ class Grapefruit(nn.Module):
         self.frag_gru = GRUCell(hidden_dim, hidden_dim)
         self.frag_lin = Linear(hidden_dim, hidden_dim)
 
-        self.lin2 = Linear(2 * hidden_dim, hidden_dim)
-        self.lin3 = Linear(hidden_dim, out_dim)
+        self.lin2 = Linear(2 * hidden_dim, out_dim)
+        self.lin3 = Linear(out_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
