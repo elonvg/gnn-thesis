@@ -5,7 +5,6 @@ from torch.nn import GRUCell, Linear
 
 from torch_geometric.nn import (
     GATv2Conv,
-    PNAConv, 
     global_add_pool, 
     global_mean_pool,
     global_max_pool
@@ -84,7 +83,7 @@ def build_fragment_complete_graph(frag_to_mol):
 
     return torch.cat(edges, dim=1)
 
-class Grapefruit(nn.Module):
+class GrapefruitSP(nn.Module):
 
     def __init__(
             self,
@@ -92,10 +91,6 @@ class Grapefruit(nn.Module):
             edge_dim=3,
             virtual_edge_dim=10,
             hidden_dim=64,
-            aggregators=DEFAULT_AGGREGATORS,
-            scalers=DEFAULT_SCALERS,
-            deg=None,
-            towers=1,
             out_dim=64,
             num_layers=2,
             num_timesteps=2,
@@ -106,10 +101,6 @@ class Grapefruit(nn.Module):
         self.in_channels = in_channels
         self.edge_dim = edge_dim
         self.hidden_dim = hidden_dim
-        self.aggregators = aggregators
-        self.scalers = scalers
-        self.deg = deg
-        self.towers = towers
         self.out_dim = out_dim
         self.num_layers = num_layers
         self.num_timesteps = num_timesteps
@@ -120,15 +111,6 @@ class Grapefruit(nn.Module):
         self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
                             add_self_loops=False, # add_self_loops=False since GRU will handle self-loops
                             negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
-        
-        self.pna = PNAConv(in_channels=hidden_dim,
-                        out_channels=hidden_dim, 
-                        edge_dim=edge_dim, 
-                        aggregators=self.aggregators,
-                        scalers=self.scalers,
-                        towers=self.towers,
-                        deg=self.deg,
-                    )
         
         self.virtual_gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=virtual_edge_dim, dropout=dropout,
                     add_self_loops=False, # add_self_loops=False since GRU will handle self-loops
@@ -161,19 +143,18 @@ class Grapefruit(nn.Module):
         self.mol_gru = GRUCell(hidden_dim, hidden_dim)
 
         # Fragment attention 
-        self.frag_gat = GATv2Conv(hidden_dim, hidden_dim, dropout=dropout,
-                                  add_self_loops=True, negative_slope=0.01)
-        self.frag_gru = GRUCell(hidden_dim, hidden_dim)
-        self.frag_lin = Linear(hidden_dim, hidden_dim)
+        # self.frag_gat = GATv2Conv(hidden_dim, hidden_dim, dropout=dropout,
+        #                           add_self_loops=True, negative_slope=0.01)
+        # self.frag_gru = GRUCell(hidden_dim, hidden_dim)
+        # self.frag_lin = Linear(hidden_dim, hidden_dim)
 
-        self.lin2 = Linear(2 * hidden_dim, hidden_dim)
+        # self.lin2 = Linear(2 * hidden_dim, hidden_dim)
         self.lin3 = Linear(hidden_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
         self.lin1.reset_parameters()
         self.gat.reset_parameters()
-        self.pna.reset_parameters()
         self.virtual_gat.reset_parameters()
         self.virtual_gate[0].reset_parameters()
         self.gru.reset_parameters()
@@ -182,10 +163,10 @@ class Grapefruit(nn.Module):
             gru.reset_parameters()
         self.mol_gat.reset_parameters()
         self.mol_gru.reset_parameters()
-        self.frag_gat.reset_parameters()
-        self.frag_gru.reset_parameters()
-        self.frag_lin.reset_parameters()
-        self.lin2.reset_parameters()
+        # self.frag_gat.reset_parameters()
+        # self.frag_gru.reset_parameters()
+        # self.frag_lin.reset_parameters()
+        # self.lin2.reset_parameters()
         self.lin3.reset_parameters()
 
 
@@ -196,14 +177,10 @@ class Grapefruit(nn.Module):
         x = self.lin1(x)
         x = F.leaky_relu(x)
 
-        # First GAT and PNA layers in parallel
+        # First GAT and virtual GAT layers in parallel
         gatc = self.gat(x, edge_index, edge_attr) # Context vector ("selective attention" from neighbours)
         gatc = F.elu(gatc)
         gatc = F.dropout(gatc, p=self.dropout, training=self.training)
-
-        pc= self.pna(x, edge_index, edge_attr) # PNA context vector ("aggregation" from neighbours)
-        pc = F.elu(pc)
-        pc = F.dropout(pc, p=self.dropout, training=self.training)
 
         # Virtual GAT context vector
         if virtual_edge_index.numel() > 0:
@@ -211,12 +188,7 @@ class Grapefruit(nn.Module):
             vgatc = F.elu(vgatc)
             vgatc = F.dropout(vgatc, p=self.dropout, training=self.training)
 
-            gate = self.virtual_gate(torch.cat([gatc, vgatc], dim=-1)) 
-            gatc = gatc + gate * vgatc # Combine GAT and virtual GAT outputs using the gate
-
-        c = torch.cat([gatc, pc], dim=-1) # Combine GAT and PNA outputs
-        # c = self.lin2(c) # Linear layer to mix GAT and PNA features
-        # c = F.elu(c)
+        c = torch.cat([gatc, vgatc], dim=-1) # Combine GAT and virtual gat outputs
 
         # Residual update
         x = self.gru(c, x)
@@ -248,34 +220,35 @@ class Grapefruit(nn.Module):
             mol = self.mol_gru(c, mol)
             mol = F.relu(mol)
 
-        ############### Fragment embedding ###############
-        atom_to_frag, frag_to_mol = make_global_fragment_ids(batch=batch, fragment_id=fragment_id)
+        # ############### Fragment embedding ###############
+        # atom_to_frag, frag_to_mol = make_global_fragment_ids(batch=batch, fragment_id=fragment_id)
 
-        num_frags = int(atom_to_frag.max().item() + 1)
-        num_mols = int(batch.max().item()) + 1
+        # num_frags = int(atom_to_frag.max().item() + 1)
+        # num_mols = int(batch.max().item()) + 1
 
-        # Atom to fragment pooling
-        frag = global_add_pool(atom_emb, atom_to_frag, size=num_frags).relu() # Initial fragment vector from pooling atom embeddings
+        # # Atom to fragment pooling
+        # frag = global_add_pool(atom_emb, atom_to_frag, size=num_frags).relu() # Initial fragment vector from pooling atom embeddings
 
-        frag_edge_index = build_fragment_complete_graph(frag_to_mol)
+        # frag_edge_index = build_fragment_complete_graph(frag_to_mol)
 
-        # Fragment attention
-        for _ in range(self.num_timesteps):
-            c = self.frag_gat(frag, frag_edge_index)
-            c = F.elu(c)
-            c = F.dropout(c, p=self.dropout, training=self.training)
+        # # Fragment attention
+        # for _ in range(self.num_timesteps):
+        #     c = self.frag_gat(frag, frag_edge_index)
+        #     c = F.elu(c)
+        #     c = F.dropout(c, p=self.dropout, training=self.training)
 
-            frag = self.frag_gru(c, frag)
-            frag = F.relu(frag)
+        #     frag = self.frag_gru(c, frag)
+        #     frag = F.relu(frag)
 
-        # Fragment pooling
-        mol_frag = global_mean_pool(frag, frag_to_mol, size=num_mols).relu() # Final fragment vector from pooling fragment embeddings
+        # # Fragment pooling
+        # mol_frag = global_mean_pool(frag, frag_to_mol, size=num_mols).relu() # Final fragment vector from pooling fragment embeddings
 
-        # Final concat and output
-        mol_final = torch.cat([mol, mol_frag], dim=-1)
-        mol_final = self.lin2(mol_final)
-        mol_final = F.relu(mol_final)
+        # # Final concat and output
+        # mol_final = torch.cat([mol, mol_frag], dim=-1)
+        # mol_final = self.lin2(mol_final)
+        # mol_final = F.relu(mol_final)
 
+        mol_final = mol
         out = F.dropout(mol_final, p=self.dropout, training=self.training)
         out = self.lin3(out)
 
