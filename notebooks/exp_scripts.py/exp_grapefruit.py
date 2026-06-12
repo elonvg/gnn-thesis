@@ -384,7 +384,7 @@ CATEGORICAL_DIM = 128
 NUMERIC_DIM = 128
 META_DROPOUT = 0.3
 
-GNN_HIDDEN_DIM = 512
+GNN_HIDDEN_DIM = 256
 GNN_OUT_DIM = 512
 TOWERS = 4
 
@@ -414,14 +414,17 @@ def build_model():
 
     pna_deg = compute_pna_degree_histogram(train_dataset)
 
-    model_gnn = GrapefruitSP(
+    model_gnn = Grapefruit(
         in_channels=ATOM_FEATURE_DIM,
         edge_dim=EDGE_FEATURE_DIM,
+        virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
         hidden_dim=GNN_HIDDEN_DIM,
+        towers=TOWERS,
+        deg=pna_deg,
         out_dim=GNN_OUT_DIM,
         num_layers=NUM_LAYERS,
         num_timesteps=NUM_TIMESTEPS,
-        dropout=0.3,
+        dropout=DROPOUT,
     ).to(device)
 
     # model_gnn = Grapefruit(
@@ -465,7 +468,7 @@ print(model)
 
 # Train The Model
 
-epochs = 200
+epochs = 100
 learning_rate = 3e-4
 weight_decay = 1e-4
 early_stopping_patience = 100
@@ -539,7 +542,7 @@ run_config = {
     "train_sampler_type": "weighted",
     "val_sampler_type": "sequential",
     "taxonomy_encoder": TaxonomyOneHot.__name__,
-    "gnn_model": f"{gnn_name}-14M",
+    "gnn_model": f"{gnn_name}-9M",
     "pretrained_tax_dim": PRETRAINED_TAX_DIM,
     "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
     "categorical_dim": CATEGORICAL_DIM,
