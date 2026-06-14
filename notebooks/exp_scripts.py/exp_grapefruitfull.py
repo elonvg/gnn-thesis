@@ -21,7 +21,6 @@ args = parser.parse_args()
 fold_id = args.fold
 seed = args.seed
 experiment_name = args.experiment_name
-print(f"Using fold_id: {fold_id}")
 print(f"Using seed: {seed}")
 print(f"Using experiment_name: {experiment_name}")
 
@@ -318,16 +317,9 @@ print(f"Unique groups: {groups.nunique():,}")
 print(f"Missing group values: {groups.isna().sum():,}")
 print(f"Fallback missing-cluster groups: {groups.str.startswith('__missing__::').sum():,}")
 
-group_kfold = GroupKFold(n_splits=n_folds)
-
-splits = list(group_kfold.split(graphs, groups=groups))
-
-train_idx, val_idx = splits[fold_id]
-
 train_dataset = _build_dataset(graphs, train_idx)
 val_dataset = _build_dataset(graphs, val_idx)
 test_dataset = None
-
 
 
 # Build DataLoaders
@@ -365,11 +357,14 @@ if test_dataset is not None:
 
 # Build model
 
+from src.models.gcn import GCN
+from src.models.gatv2 import GATv2
 from src.models.pna import PNA, PNA_1_5M_CONFIG, compute_pna_degree_histogram
-from src.models.toxicity_model import ToxicityModel
-from src.models.meta_encoder import MetaEncoder, TaxonomyOneHot
-from src.models.attentive_fp import AttentiveFP
 from src.models.grapefruit import Grapefruit
+from src.models.grapefruitsp import GrapefruitSP
+from src.models.toxicity_model import ToxicityModel
+from src.models.attentive_fp import AttentiveFP
+from src.models.meta_encoder import MetaEncoder, TaxonomyEncoder, TaxonomyOneHot
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -381,7 +376,7 @@ CATEGORICAL_DIM = 128
 NUMERIC_DIM = 128
 META_DROPOUT = 0.3
 
-GNN_HIDDEN_DIM = 512
+GNN_HIDDEN_DIM = 256
 GNN_OUT_DIM = 512
 TOWERS = 4
 
@@ -411,15 +406,31 @@ def build_model():
 
     pna_deg = compute_pna_degree_histogram(train_dataset)
 
-    model_gnn = AttentiveFP(
+    model_gnn = Grapefruit(
         in_channels=ATOM_FEATURE_DIM,
         edge_dim=EDGE_FEATURE_DIM,
-        hidden_channels=GNN_HIDDEN_DIM,
-        out_channels=GNN_OUT_DIM,
+        virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
+        hidden_dim=GNN_HIDDEN_DIM,
+        towers=TOWERS,
+        deg=pna_deg,
+        out_dim=GNN_OUT_DIM,
         num_layers=NUM_LAYERS,
         num_timesteps=NUM_TIMESTEPS,
-        dropout=0.3,
+        dropout=DROPOUT,
     ).to(device)
+
+    # model_gnn = Grapefruit(
+    #     in_channels=ATOM_FEATURE_DIM,
+    #     edge_dim=EDGE_FEATURE_DIM,
+    #     virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
+    #     hidden_dim=GNN_HIDDEN_DIM,
+    #     towers=TOWERS,
+    #     deg=pna_deg,
+    #     out_dim=GNN_OUT_DIM,
+    #     num_layers=NUM_LAYERS,
+    #     num_timesteps=NUM_TIMESTEPS,
+    #     dropout=DROPOUT,
+    # ).to(device)
 
     # model_gnn = None
 
@@ -449,7 +460,7 @@ print(model)
 
 # Train The Model
 
-epochs = 200
+epochs = 150
 learning_rate = 3e-4
 weight_decay = 1e-4
 early_stopping_patience = 150
@@ -523,7 +534,7 @@ run_config = {
     "train_sampler_type": "weighted",
     "val_sampler_type": "sequential",
     "taxonomy_encoder": TaxonomyOneHot.__name__,
-    "gnn_model": f"{gnn_name}-11M-200",
+    "gnn_model": f"{gnn_name}-9M-150",
     "pretrained_tax_dim": PRETRAINED_TAX_DIM,
     "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
     "categorical_dim": CATEGORICAL_DIM,
@@ -711,10 +722,11 @@ if wandb_run is not None:
         }
     )
 
+
 checkpoint_dir = PROJECT_ROOT / "outputs" / "models"
 checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-checkpoint_path = checkpoint_dir / f"{gnn_name}-11M-200-fold{fold_id}.pt"
+checkpoint_path = checkpoint_dir / f"{gnn_name}-9M-150-fold{fold_id}.pt"
 
 torch.save(
     {
