@@ -63,7 +63,7 @@ class AFPGAT(torch.nn.Module):
         
         self.mol_gru = GRUCell(hidden_dim, hidden_dim)
 
-        self.lin2 = Linear(hidden_dim, out_dim)
+        self.lin2 = Linear(3 * hidden_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
@@ -101,9 +101,12 @@ class AFPGAT(torch.nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
 
+        x_mean = global_mean_pool(x, batch).relu_()
+        x_max = global_max_pool(x, batch).relu_()
+
         mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
-        # mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
-        # mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
+        # mol_emb = global_mean_pool(x, batch).relu_() # Inital molecule state vector
+        # mol_emb = global_max_pool(x, batch).relu_() # Inital molecule state vector
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
@@ -113,5 +116,8 @@ class AFPGAT(torch.nn.Module):
 
         # Output
         mol_emb = F.dropout(mol_emb, p=self.dropout, training=self.training)
-        out = self.lin2(mol_emb) # Linear layer for final prediction
+
+        agg = torch.cat([mol_emb, x_mean, x_max], dim=-1)
+
+        out = self.lin2(agg) # Linear layer for final prediction
         return out
