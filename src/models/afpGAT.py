@@ -21,10 +21,9 @@ class AFPGAT(torch.nn.Module):
         self,
         in_channels=9,
         edge_dim=3,
-        virtual_edge_dim=10,
         hidden_dim=64,
         out_dim=64,
-        num_layers=2,
+        num_layers=3,
         num_timesteps=2,
         dropout: float=0.2,
     ):
@@ -41,7 +40,7 @@ class AFPGAT(torch.nn.Module):
         self.lin1 = Linear(in_channels, hidden_dim)
 
         self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
-                            add_self_loops=True,
+                            add_self_loops=False,
                             negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
 
         self.gru = GRUCell(hidden_dim, hidden_dim)
@@ -92,7 +91,7 @@ class AFPGAT(torch.nn.Module):
 
         # Additional attentive layers
         for gat, gru in zip(self.atom_gats, self.atom_grus):
-            c = gat(x, edge_index) # Computer attention + context vector
+            c = gat(x, edge_index, edge_attr) # Computer attention + context vector
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
             x = gru(c, x).relu() # Updates atom state
@@ -101,12 +100,7 @@ class AFPGAT(torch.nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
 
-        x_mean = global_mean_pool(x, batch).relu_()
-        x_max = global_max_pool(x, batch).relu_()
-
         mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
-        # mol_emb = global_mean_pool(x, batch).relu_() # Inital molecule state vector
-        # mol_emb = global_max_pool(x, batch).relu_() # Inital molecule state vector
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
@@ -117,7 +111,5 @@ class AFPGAT(torch.nn.Module):
         # Output
         mol_emb = F.dropout(mol_emb, p=self.dropout, training=self.training)
 
-        agg = torch.cat([mol_emb, x_mean, x_max], dim=-1)
-
-        out = self.lin2(agg) # Linear layer for final prediction
+        out = self.lin2(mol_emb) # Linear layer for final prediction
         return out
