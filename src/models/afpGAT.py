@@ -37,7 +37,17 @@ class AFPGAT(torch.nn.Module):
         self.num_timesteps = num_timesteps
         self.dropout = dropout
 
-        self.lin1 = Linear(in_channels, hidden_dim)
+        self.atom_encoder = nn.Sequential(
+            Linear(in_channels, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+        )
+
+        # self.lin1 = Linear(in_channels, hidden_dim)
 
         self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
                             add_self_loops=False,
@@ -62,11 +72,12 @@ class AFPGAT(torch.nn.Module):
         
         self.mol_gru = GRUCell(hidden_dim, hidden_dim)
 
-        self.lin2 = Linear(3 * hidden_dim, out_dim)
+        self.lin2 = Linear(hidden_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
-        self.lin1.reset_parameters()
+        self.atom_encoder.reset_parameters()
+        # self.lin1.reset_parameters()
         self.gat.reset_parameters()
         self.gru.reset_parameters()
         for gat, gru in zip(self.atom_gats, self.atom_grus):
@@ -81,7 +92,8 @@ class AFPGAT(torch.nn.Module):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
 
         # Inital atom embedding:
-        x = F.leaky_relu_(self.lin1(x))
+        x = self.atom_encoder(x)
+        # x = F.leaky_relu_(self.lin1(x))
 
         # First GAT layer
         c = F.elu_(self.gat(x, edge_index, edge_attr))
