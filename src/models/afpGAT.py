@@ -102,6 +102,8 @@ class AFPGAT(torch.nn.Module):
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
 
         mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
+        # mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
+        # mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
