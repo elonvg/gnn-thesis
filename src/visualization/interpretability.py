@@ -555,3 +555,156 @@ def draw_atom_shapley_heatmap_gaussian(
     plt.show()
 
     return atom_scores
+
+def predict_graph(model, graph, device):
+    g = graph.clone()
+
+    if hasattr(g, "batch") and g.batch is not None:
+        del g.batch
+
+    batch = Batch.from_data_list([g]).to(device)
+
+    model.eval()
+    with torch.no_grad():
+        return model(batch).view(-1).item()
+
+def cat_pred_sweep(model, graph, category, categorical_encoder, device):
+    encoder = categorical_encoder[category]
+    decoder = {v: k for k, v in encoder.items()}
+
+    base_pred = predict_graph(model, graph, device)
+
+    raw = getattr(graph, category)
+    base_id = int(raw.item() if isinstance(raw, torch.Tensor) else raw)    
+    base_name = decoder[base_id]
+
+    rows = []
+
+    for name, id in encoder.items():
+        g = graph.clone()
+
+        if hasattr(g, "batch") and g.batch is not None:
+            del g.batch
+
+        new_val = torch.tensor(id, dtype=torch.long, device=g.x.device)
+        setattr(g, category, new_val)
+
+        pred_log10c = predict_graph(model, g, device)
+
+        rows.append({
+                    category : name,
+                    f"{category}_id" : id,
+                    "pred_log10c" : pred_log10c,
+                    "pred_conc_same_unit" : 10 ** pred_log10c,
+                    "delta_log10c_vs_original" : pred_log10c - base_pred,
+                    f"original_{category}" : base_name,
+                })
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("pred_log10c")
+        .reset_index(drop=True)
+    )
+
+import copy
+from torch import nn
+
+
+class ZeroTaxidEncoder(nn.Module):
+    def __init__(self, output_dim):
+        super().__init__()
+        self.output_dim = output_dim
+
+    def forward(self, data):
+        # infer batch size from graph batch if available
+        if hasattr(data, "batch") and data.batch is not None:
+            batch_size = int(data.batch.max().item()) + 1
+        else:
+            batch_size = data.y.view(-1).numel() if hasattr(data, "y") else 1
+
+        device = data.x.device
+        return torch.zeros(batch_size, self.output_dim, device=device)
+
+def plot_species_sweep_muted(
+    model,
+    graph,
+    categorical_encoder,
+    device,
+    df=None,
+    figsize=(9, 6),
+):
+
+    model.eval()
+
+    # Make no-taxid copy
+    model_no_taxid = copy.deepcopy(model)
+    taxid_encoder = model_no_taxid.meta_encoder.pretrained_taxid_encoder
+    taxid_dim = taxid_encoder.output_dim
+
+    model_no_taxid.meta_encoder.pretrained_taxid_encoder = (
+        ZeroTaxidEncoder(taxid_dim).to(device)
+    )
+    model_no_taxid.eval()
+
+    # Run sweeps
+    sweep_with_taxid = cat_pred_sweep(
+        model, graph, "species_group", categorical_encoder, device
+    )
+
+    sweep_no_taxid = cat_pred_sweep(
+        model_no_taxid, graph, "species_group", categorical_encoder, device
+    )
+
+    comparison = sweep_with_taxid.merge(
+        sweep_no_taxid,
+        on="species_group",
+        suffixes=("_with_taxid", "_no_taxid"),
+    )
+
+    comparison = comparison.sort_values("pred_log10c_with_taxid")
+
+    # Pull molecule / endpoint info
+    row_id = int(graph.row_id.item()) if hasattr(graph, "row_id") else None
+
+    smiles = getattr(graph, "smiles", "unknown molecule")
+    endpoint = None
+    chemical_name = None
+
+    if df is not None and row_id is not None:
+        endpoint = df.iloc[row_id].get("endpoint", None)
+        chemical_name = df.iloc[row_id].get("chemical_name", None)
+
+    if endpoint is None and hasattr(graph, "endpoint"):
+        endpoint_decoder = {
+            v: k for k, v in categorical_encoder["endpoint"].items()
+        }
+        endpoint = endpoint_decoder.get(int(graph.endpoint.item()), "unknown endpoint")
+
+    title_parts = []
+    if chemical_name:
+        title_parts.append(str(chemical_name))
+    else:
+        title_parts.append(str(smiles))
+
+    if endpoint:
+        title_parts.append(f"endpoint: {endpoint}")
+
+    title = " | ".join(title_parts)
+
+    # Plot
+    ax = comparison.plot(
+        x="species_group",
+        y=["pred_log10c_with_taxid", "pred_log10c_no_taxid"],
+        kind="barh",
+        figsize=figsize,
+    )
+
+    ax.set_title(title)
+    ax.set_xlabel("Predicted log10 concentration")
+    ax.set_ylabel("Counterfactual species group")
+    ax.legend(["With taxid", "Taxid muted"])
+
+    plt.tight_layout()
+    plt.show()
+
+    return comparison

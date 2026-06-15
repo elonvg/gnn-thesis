@@ -9,6 +9,7 @@ from torch_geometric.nn import (
     global_mean_pool,
     global_max_pool
 )
+
 from src import data
 
 DEFAULT_AGGREGATORS = ("mean", "min", "max", "std")

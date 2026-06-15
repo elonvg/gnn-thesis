@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from src.data.graph_building import build_graph_features
 from src.training.loops import predict_df
-from src.visualization.result_plots import summarize_by_group
+from src.visualization.results import summarize_by_group
 
 
 class LoaderBatch(SimpleNamespace):
