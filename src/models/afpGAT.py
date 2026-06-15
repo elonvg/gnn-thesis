@@ -30,6 +30,14 @@ class AFPGAT(torch.nn.Module):
     ):
         super().__init__()
 
+        self.in_channels = in_channels
+        self.edge_dim = edge_dim
+        self.hidden_dim = hidden_dim
+        self.out_dim = out_dim
+        self.num_layers = num_layers
+        self.num_timesteps = num_timesteps
+        self.dropout = dropout
+
         self.lin1 = Linear(in_channels, hidden_dim)
 
         self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
@@ -55,17 +63,17 @@ class AFPGAT(torch.nn.Module):
         
         self.mol_gru = GRUCell(hidden_dim, hidden_dim)
 
-        self.lin3 = Linear(hidden_dim, out_dim)
+        self.lin2 = Linear(hidden_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
         self.lin1.reset_parameters()
-        self.gate_conv.reset_parameters()
+        self.gat.reset_parameters()
         self.gru.reset_parameters()
-        for conv, gru in zip(self.atom_convs, self.atom_grus):
-            conv.reset_parameters()
+        for gat, gru in zip(self.atom_gats, self.atom_grus):
+            gat.reset_parameters()
             gru.reset_parameters()
-        self.mol_conv.reset_parameters()
+        self.mol_gat.reset_parameters()
         self.mol_gru.reset_parameters()
         self.lin2.reset_parameters()
 
@@ -77,15 +85,14 @@ class AFPGAT(torch.nn.Module):
         x = F.leaky_relu_(self.lin1(x))
 
         # First GAT layer
-        c = F.elu_(self.gate_conv(x, edge_index, edge_attr))
+        c = F.elu_(self.gat(x, edge_index, edge_attr))
         c = F.dropout(c, p=self.dropout, training=self.training)
         # Update embedding
         x = self.gru(c, x).relu_()
 
         # Additional attentive layers
-        # Note: using GATConv instead of GATEConv - no edge features
-        for conv, gru in zip(self.atom_convs, self.atom_grus):
-            c = conv(x, edge_index) # Computer attention + context vector
+        for gat, gru in zip(self.atom_gats, self.atom_grus):
+            c = gat(x, edge_index) # Computer attention + context vector
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
             x = gru(c, x).relu() # Updates atom state
@@ -98,11 +105,11 @@ class AFPGAT(torch.nn.Module):
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
-            cmol = F.elu_(self.mol_conv((x, mol_emb), edge_index)) # Attention
+            cmol = F.elu_(self.mol_gat((x, mol_emb), edge_index)) # Attention
             cmol = F.dropout(cmol, p=self.dropout, training=self.training)
             mol_emb = self.mol_gru(cmol, mol_emb).relu_() # Update
 
         # Output
         mol_emb = F.dropout(mol_emb, p=self.dropout, training=self.training)
-        out = self.lin3(out) # Linear layer for final prediction
+        out = self.lin2(mol_emb) # Linear layer for final prediction
         return out
