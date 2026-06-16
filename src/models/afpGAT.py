@@ -60,8 +60,14 @@ class AFPGAT(torch.nn.Module):
         self.atom_gats = nn.ModuleList() 
         self.atom_grus = nn.ModuleList()
         for _ in range(num_layers - 1):
-            gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
-                             add_self_loops=False, negative_slope=0.01)
+            gat = GATv2Conv(
+                hidden_dim, hidden_dim,
+                heads=num_heads, concat=False,
+                edge_dim=edge_dim,
+                dropout=dropout,
+                add_self_loops=False,
+                negative_slope=0.01,
+            )
             
             gru = GRUCell(hidden_dim, hidden_dim)
 
