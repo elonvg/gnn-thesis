@@ -23,6 +23,7 @@ class AFPGAT(torch.nn.Module):
         edge_dim=3,
         hidden_dim=64,
         out_dim=64,
+        num_heads=4,
         num_layers=3,
         num_timesteps=2,
         dropout: float=0.2,
@@ -40,9 +41,18 @@ class AFPGAT(torch.nn.Module):
         self.lin1 = Linear(in_channels, hidden_dim)
         self.norm1 = nn.LayerNorm(hidden_dim)
 
-        self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
-                            add_self_loops=False,
-                            negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
+        # self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
+        #                     add_self_loops=False,
+        #                     negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
+
+        self.gat = GATv2Conv(
+            hidden_dim, hidden_dim,
+            heads=num_heads, concat=False,
+            edge_dim=edge_dim,
+            dropout=dropout,
+            add_self_loops=False,
+            negative_slope=0.01,
+        )
 
         self.gru = GRUCell(hidden_dim, hidden_dim)
 
@@ -58,8 +68,14 @@ class AFPGAT(torch.nn.Module):
             self.atom_gats.append(gat)
             self.atom_grus.append(gru)  
 
-        self.mol_gat = GATv2Conv(hidden_dim, hidden_dim, dropout=dropout,
-                                  add_self_loops=False, negative_slope=0.01)
+        self.mol_gat = GATv2Conv(
+            hidden_dim, hidden_dim,
+            heads=num_heads, concat=False,
+            edge_dim=edge_dim,
+            dropout=dropout,
+            add_self_loops=False,
+            negative_slope=0.01,
+        )
         
         self.mol_gru = GRUCell(hidden_dim, hidden_dim)
 
