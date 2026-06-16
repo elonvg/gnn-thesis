@@ -37,7 +37,7 @@ class AFPGAT(torch.nn.Module):
         self.num_timesteps = num_timesteps
         self.dropout = dropout
 
-        # self.lin1 = Linear(in_channels, hidden_dim)
+        self.lin1 = Linear(in_channels, hidden_dim)
         self.norm1 = nn.LayerNorm(hidden_dim)
 
         self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
@@ -87,19 +87,17 @@ class AFPGAT(torch.nn.Module):
         x = self.norm1(x)
 
         # First GAT layer
-        x_prev = x
         c = F.elu_(self.gat(x, edge_index, edge_attr))
         c = F.dropout(c, p=self.dropout, training=self.training)
         # Update embedding
-        x = F.relu(self.gru(c, x) + x_prev) # Residual connection
+        x = F.relu_(self.gru(c, x)) # Residual connection
 
         # Additional attentive layers
         for gat, gru in zip(self.atom_gats, self.atom_grus):
-            x = x_prev
             c = gat(x, edge_index, edge_attr) # Computer attention + context vector
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
-            x = F.relu(self.gru(c, x) + x_prev)
+            x = F.relu(self.gru(c, x))
 
         # Molecule embedding:
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
