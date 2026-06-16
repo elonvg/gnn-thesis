@@ -68,6 +68,10 @@ class AFPGAT(torch.nn.Module):
             self.atom_gats.append(gat)
             self.atom_grus.append(gru)  
 
+        self.atom_norms = nn.ModuleList([
+            nn.LayerNorm(hidden_dim) for _ in range(num_layers)
+])
+
         self.mol_gat = GATv2Conv(
             hidden_dim, hidden_dim,
             heads=num_heads, concat=False,
@@ -109,11 +113,11 @@ class AFPGAT(torch.nn.Module):
         x = F.relu_(self.gru(c, x)) # Residual connection
 
         # Additional attentive layers
-        for gat, gru in zip(self.atom_gats, self.atom_grus):
-            c = gat(x, edge_index, edge_attr) # Computer attention + context vector
+        for norm, gat, gru in zip(self.atom_norms, self.atom_gats, self.atom_grus):
+            c = gat(norm(x), edge_index, edge_attr) # Computer attention + context vector
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
-            x = F.relu(self.gru(c, x))
+            x = F.relu(gru(c, x))
 
         # Molecule embedding:
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
