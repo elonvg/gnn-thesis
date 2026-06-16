@@ -13,7 +13,18 @@ from torch_geometric.nn import (
     global_max_pool
 )
 
+class ScaledGATv2Conv(nn.Module):
+    def __init__(self, *args, temperature=8.0, **kwargs):
+        super().__init__()
+        self.conv = GATv2Conv(*args, **kwargs)
+        self.temperature = temperature
 
+    def forward(self, x, edge_index, edge_attr=None):
+        # Scale input down → smaller dot products → softer attention
+        x_scaled = x / self.temperature
+        if edge_attr is not None:
+            return self.conv(x_scaled, edge_index, edge_attr)
+        return self.conv(x_scaled, edge_index)
 
 class AFPGAT(torch.nn.Module):
 
@@ -45,7 +56,7 @@ class AFPGAT(torch.nn.Module):
         #                     add_self_loops=False,
         #                     negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
 
-        self.gat = GATv2Conv(
+        self.gat = ScaledGATv2Conv(
             hidden_dim, hidden_dim,
             heads=num_heads, concat=False,
             edge_dim=edge_dim,
@@ -60,14 +71,8 @@ class AFPGAT(torch.nn.Module):
         self.atom_gats = nn.ModuleList() 
         self.atom_grus = nn.ModuleList()
         for _ in range(num_layers - 1):
-            gat = GATv2Conv(
-                hidden_dim, hidden_dim,
-                heads=num_heads, concat=False,
-                edge_dim=edge_dim,
-                dropout=dropout,
-                add_self_loops=False,
-                negative_slope=0.01,
-            )
+            gat = ScaledGATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
+                             add_self_loops=False, negative_slope=0.01)
             
             gru = GRUCell(hidden_dim, hidden_dim)
 
@@ -78,7 +83,7 @@ class AFPGAT(torch.nn.Module):
             nn.LayerNorm(hidden_dim) for _ in range(num_layers)
 ])
 
-        self.mol_gat = GATv2Conv(
+        self.mol_gat = ScaledGATv2Conv(
             hidden_dim, hidden_dim,
             heads=num_heads, concat=False,
             edge_dim=edge_dim,
