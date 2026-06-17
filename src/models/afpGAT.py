@@ -14,14 +14,19 @@ from torch_geometric.nn import (
 )
 
 class ScaledGATv2Conv(nn.Module):
-    def __init__(self, *args, temperature=8.0, **kwargs):
+    def __init__(self, *args, temperature=1.0, **kwargs):
         super().__init__()
         self.conv = GATv2Conv(*args, **kwargs)
         self.temperature = temperature
 
     def forward(self, x, edge_index, edge_attr=None):
-        # Scale input down → smaller dot products → softer attention
-        x_scaled = x / self.temperature
+        # Handle both plain tensor (atom layers) and 
+        # tuple (x, mol_emb) used in mol_gat bipartite form
+        if isinstance(x, tuple):
+            x_scaled = (x[0] / self.temperature, x[1] / self.temperature)
+        else:
+            x_scaled = x / self.temperature
+
         if edge_attr is not None:
             return self.conv(x_scaled, edge_index, edge_attr)
         return self.conv(x_scaled, edge_index)
@@ -34,7 +39,7 @@ class AFPGAT(torch.nn.Module):
         edge_dim=3,
         hidden_dim=64,
         out_dim=64,
-        num_heads=4,
+        num_heads=1,
         num_layers=3,
         num_timesteps=2,
         dropout: float=0.2,
@@ -83,8 +88,9 @@ class AFPGAT(torch.nn.Module):
             nn.LayerNorm(hidden_dim) for _ in range(num_layers)
 ])
 
-        self.mol_gat = ScaledGATv2Conv(
-            hidden_dim, hidden_dim,
+        self.mol_gat = GATv2Conv(
+            in_channels=(hidden_dim, 2 * hidden_dim),
+            out_channels=2 * hidden_dim,
             heads=num_heads, concat=False,
             edge_dim=edge_dim,
             dropout=dropout,
@@ -92,9 +98,9 @@ class AFPGAT(torch.nn.Module):
             negative_slope=0.01,
         )
         
-        self.mol_gru = GRUCell(hidden_dim, hidden_dim)
+        self.mol_gru = GRUCell(2*hidden_dim, 2*hidden_dim)
 
-        self.lin2 = Linear(hidden_dim, out_dim)
+        self.lin2 = Linear(2*hidden_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
@@ -134,7 +140,9 @@ class AFPGAT(torch.nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
 
-        mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
+        mol_emb_add = global_add_pool(x, batch).relu_() # Inital molecule state vector
+        mol_emb_mean = global_mean_pool(x, batch).relu_() # Inital molecule state vector
+        mol_emb = torch.cat([mol_emb_add, mol_emb_mean], dim=-1)
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
