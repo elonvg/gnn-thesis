@@ -13,24 +13,6 @@ from torch_geometric.nn import (
     global_max_pool
 )
 
-class ScaledGATv2Conv(nn.Module):
-    def __init__(self, *args, temperature=1.0, **kwargs):
-        super().__init__()
-        self.conv = GATv2Conv(*args, **kwargs)
-        self.temperature = temperature
-
-    def forward(self, x, edge_index, edge_attr=None):
-        # Handle both plain tensor (atom layers) and 
-        # tuple (x, mol_emb) used in mol_gat bipartite form
-        if isinstance(x, tuple):
-            x_scaled = (x[0] / self.temperature, x[1] / self.temperature)
-        else:
-            x_scaled = x / self.temperature
-
-        if edge_attr is not None:
-            return self.conv(x_scaled, edge_index, edge_attr)
-        return self.conv(x_scaled, edge_index)
-
 class AFPGAT(torch.nn.Module):
 
     def __init__(
@@ -61,7 +43,7 @@ class AFPGAT(torch.nn.Module):
         #                     add_self_loops=False,
         #                     negative_slope=0.01) # negative_slope=0.01 for leakyReLU, to suppress negative values
 
-        self.gat = ScaledGATv2Conv(
+        self.gat = GATv2Conv(
             hidden_dim, hidden_dim,
             heads=num_heads, concat=False,
             edge_dim=edge_dim,
@@ -76,7 +58,7 @@ class AFPGAT(torch.nn.Module):
         self.atom_gats = nn.ModuleList() 
         self.atom_grus = nn.ModuleList()
         for _ in range(num_layers - 1):
-            gat = ScaledGATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
+            gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
                              add_self_loops=False, negative_slope=0.01)
             
             gru = GRUCell(hidden_dim, hidden_dim)
@@ -98,9 +80,9 @@ class AFPGAT(torch.nn.Module):
             negative_slope=0.01,
         )
         
-        self.mol_gru = GRUCell(2*hidden_dim, 2*hidden_dim)
+        self.mol_gru = GRUCell(2 * hidden_dim, 2 * hidden_dim)
 
-        self.lin2 = Linear(2*hidden_dim, out_dim)
+        self.lin2 = Linear(2 * hidden_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
