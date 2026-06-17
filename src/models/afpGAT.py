@@ -14,14 +14,19 @@ from torch_geometric.nn import (
 )
 
 class ScaledGATv2Conv(nn.Module):
-    def __init__(self, *args, temperature=8.0, **kwargs):
+    def __init__(self, *args, temperature=1.0, **kwargs):
         super().__init__()
         self.conv = GATv2Conv(*args, **kwargs)
         self.temperature = temperature
 
     def forward(self, x, edge_index, edge_attr=None):
-        # Scale input down → smaller dot products → softer attention
-        x_scaled = x / self.temperature
+        # Handle both plain tensor (atom layers) and 
+        # tuple (x, mol_emb) used in mol_gat bipartite form
+        if isinstance(x, tuple):
+            x_scaled = (x[0] / self.temperature, x[1] / self.temperature)
+        else:
+            x_scaled = x / self.temperature
+
         if edge_attr is not None:
             return self.conv(x_scaled, edge_index, edge_attr)
         return self.conv(x_scaled, edge_index)
@@ -34,7 +39,7 @@ class AFPGAT(torch.nn.Module):
         edge_dim=3,
         hidden_dim=64,
         out_dim=64,
-        num_heads=4,
+        num_heads=2,
         num_layers=3,
         num_timesteps=2,
         dropout: float=0.2,
