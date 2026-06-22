@@ -34,7 +34,7 @@ torch.cuda.manual_seed_all(args.seed)
 # # Hyperparameters
 
 USE_WANDB = True
-n_folds = 5
+n_folds = 10
 
 # N_SAMPLES = 100
 N_SAMPLES = None
@@ -449,7 +449,7 @@ print(model)
 
 # Train The Model
 
-epochs = 200
+epochs = 150
 learning_rate = 3e-4
 weight_decay = 1e-4
 early_stopping_patience = 150
@@ -523,7 +523,7 @@ run_config = {
     "train_sampler_type": "weighted",
     "val_sampler_type": "sequential",
     "taxonomy_encoder": TaxonomyOneHot.__name__,
-    "gnn_model": f"{gnn_name}-11M-200",
+    "gnn_model": f"{gnn_name}-11M-10fold",
     "pretrained_tax_dim": PRETRAINED_TAX_DIM,
     "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
     "categorical_dim": CATEGORICAL_DIM,
@@ -711,10 +711,10 @@ if wandb_run is not None:
         }
     )
 
-checkpoint_dir = PROJECT_ROOT / "outputs" / "models"
+checkpoint_dir = PROJECT_ROOT / "outputs" / "models" / "afp-11M-10fold"
 checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-checkpoint_path = checkpoint_dir / f"{gnn_name}-11M-200-fold{fold_id}.pt"
+checkpoint_path = checkpoint_dir / f"{gnn_name}-11M-fold{fold_id}.pt"
 
 torch.save(
     {
