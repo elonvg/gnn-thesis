@@ -37,7 +37,7 @@ class AFPGAT(torch.nn.Module):
         self.dropout = dropout
 
         self.lin1 = Linear(in_channels, hidden_dim)
-        self.norm1 = nn.LayerNorm(hidden_dim)
+        # self.norm1 = nn.LayerNorm(hidden_dim)
 
         # self.gat = GATv2Conv(hidden_dim, hidden_dim, edge_dim=edge_dim, dropout=dropout,
         #                     add_self_loops=False,
@@ -66,12 +66,12 @@ class AFPGAT(torch.nn.Module):
             self.atom_gats.append(gat)
             self.atom_grus.append(gru)  
 
-        self.atom_norms = nn.ModuleList([
-            nn.LayerNorm(hidden_dim) for _ in range(num_layers)
-])
+        # self.atom_norms = nn.ModuleList([
+        #     nn.LayerNorm(hidden_dim) for _ in range(num_layers - 1)
+        # ])
 
         self.mol_gat = GATv2Conv(
-            in_channels=(hidden_dim, 2 * hidden_dim),
+            in_channels=(hidden_dim, hidden_dim),
             out_channels=2 * hidden_dim,
             heads=num_heads, concat=False,
             edge_dim=edge_dim,
@@ -80,14 +80,14 @@ class AFPGAT(torch.nn.Module):
             negative_slope=0.01,
         )
         
-        self.mol_gru = GRUCell(2 * hidden_dim, 2 * hidden_dim)
+        self.mol_gru = GRUCell(2 * hidden_dim, hidden_dim)
 
-        self.lin2 = Linear(2 * hidden_dim, out_dim)
+        self.lin2 = Linear(hidden_dim, out_dim)
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
         self.lin1.reset_parameters()
-        self.norm1.reset_parameters()
+        # self.norm1.reset_parameters()
         self.gat.reset_parameters()
         self.gru.reset_parameters()
         for gat, gru in zip(self.atom_gats, self.atom_grus):
@@ -103,7 +103,7 @@ class AFPGAT(torch.nn.Module):
 
         # Inital atom embedding:
         x = F.leaky_relu_(self.lin1(x))
-        x = self.norm1(x)
+        # x = self.norm1(x)
 
         # First GAT layer
         c = F.elu_(self.gat(x, edge_index, edge_attr))
@@ -112,8 +112,8 @@ class AFPGAT(torch.nn.Module):
         x = F.relu_(self.gru(c, x)) # Residual connection
 
         # Additional attentive layers
-        for norm, gat, gru in zip(self.atom_norms, self.atom_gats, self.atom_grus):
-            c = gat(norm(x), edge_index, edge_attr) # Computer attention + context vector
+        for gat, gru in zip(self.atom_gats, self.atom_grus):
+            c = gat(x, edge_index, edge_attr) # Computer attention + context vector
             c = F.elu(c)
             c = F.dropout(c, p=self.dropout, training=self.training)
             x = F.relu(gru(c, x))
@@ -122,9 +122,9 @@ class AFPGAT(torch.nn.Module):
         row = torch.arange(batch.size(0), device=batch.device) # Atom indices
         edge_index = torch.stack([row, batch], dim=0) # New edge_index for "supernode" molecule
 
-        mol_emb_add = global_add_pool(x, batch).relu_() # Inital molecule state vector
-        mol_emb_mean = global_mean_pool(x, batch).relu_() # Inital molecule state vector
-        mol_emb = torch.cat([mol_emb_add, mol_emb_mean], dim=-1)
+        mol_emb = global_add_pool(x, batch).relu_() # Inital molecule state vector
+        # mol_emb_mean = global_mean_pool(x, batch).relu_() # Inital molecule state vector
+        # mol_emb = torch.cat([mol_emb_add, mol_emb_mean], dim=-1)
 
         # Molecule level refinement - num_timesteps t
         for t in range(self.num_timesteps):
