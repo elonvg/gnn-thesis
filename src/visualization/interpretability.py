@@ -4,8 +4,9 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from matplotlib.colors import LinearSegmentedColormap
 from rdkit import Chem
-from rdkit.Chem import Draw, rdDepictor
+from rdkit.Chem import BRICS, Draw, rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
+from rdkit.Chem.Scaffolds import MurckoScaffold
 from io import BytesIO
 from PIL import Image
 from matplotlib import cm, colors
@@ -14,6 +15,24 @@ from rdkit import Chem
 import pandas as pd
 
 import torch
+
+def load_model_folds(model_name):
+    model_dir = EXPERIMENT_DIR / model_name
+    frames = []
+
+    for path in sorted(model_dir.glob("fold_*_val_predictions.csv.gz")):
+        fold = int(fold_pattern.search(path.name).group(1))
+
+        df = pd.read_csv(path, compression="gzip")
+        df["fold"] = fold
+        df["model"] = model_name
+
+        frames.append(df)
+
+    if not frames:
+        raise FileNotFoundError(f"No fold prediction files found in {model_dir}")
+
+    return pd.concat(frames, ignore_index=True)
 
 def draw_atom_heatmap_gaussian(
     smiles,
@@ -424,6 +443,423 @@ def atom_shapley_random(model, graph, n_samples=500, p=0.5):
 
     return shapley
 
+def atom_shapley_permutation(model, graph, n_samples=500):
+    model.eval()
+
+    num_atoms = graph.x.size(0)
+    baseline_x = torch.zeros_like(graph.x)
+
+    shapley = torch.zeros(num_atoms, device=graph.x.device)
+
+    with torch.no_grad():
+        for _ in range(n_samples):
+            perm = torch.randperm(num_atoms, device=graph.x.device)
+
+            coalition = torch.zeros(num_atoms, dtype=torch.bool, device=graph.x.device)
+
+            pred_prev = predict_with_atom_mask(model, graph, coalition, baseline_x)
+
+            for atom_idx in perm:
+                coalition[atom_idx] = True
+
+                pred_new = predict_with_atom_mask(model, graph, coalition, baseline_x)
+
+                shapley[atom_idx] += pred_new - pred_prev
+
+                pred_prev = pred_new
+
+    return shapley / n_samples
+
+def group_shapley_permutation(model, graph, groups, n_samples=500):
+    model.eval()
+
+    num_groups = len(groups)
+    baseline_x = torch.zeros_like(graph.x)
+
+    shapley = torch.zeros(num_groups, device=graph.x.device)
+
+    def predict_with_group_mask(active_groups):
+        atom_mask = torch.zeros(graph.x.size(0), dtype=torch.bool, device=graph.x.device)
+
+        for g_idx in active_groups:
+            atom_mask[groups[g_idx]] = True
+
+        return predict_with_atom_mask(model, graph, atom_mask, baseline_x)
+
+    with torch.no_grad():
+        for _ in range(n_samples):
+            perm = torch.randperm(num_groups, device=graph.x.device)
+
+            active = []
+            pred_prev = predict_with_group_mask(active)
+
+            for g_idx in perm:
+                active.append(g_idx.item())
+                pred_new = predict_with_group_mask(active)
+
+                shapley[g_idx] += pred_new - pred_prev
+                pred_prev = pred_new
+
+    return shapley / n_samples
+
+
+def _as_rdkit_mol(smiles_or_mol):
+    if isinstance(smiles_or_mol, str):
+        mol = Chem.MolFromSmiles(smiles_or_mol)
+        if mol is None:
+            raise ValueError(f"Could not parse SMILES: {smiles_or_mol}")
+        return mol
+
+    if smiles_or_mol is None:
+        raise ValueError("Expected a SMILES string or RDKit molecule, got None.")
+
+    return smiles_or_mol
+
+
+def _whole_molecule_group(mol):
+    return [list(range(mol.GetNumAtoms()))]
+
+
+def get_disconnected_atom_groups(smiles_or_mol):
+    """Return one atom group per disconnected RDKit component."""
+    mol = _as_rdkit_mol(smiles_or_mol)
+    groups = Chem.GetMolFrags(
+        mol,
+        asMols=False,
+        sanitizeFrags=False,
+    )
+    return _sorted_atom_groups(groups)
+
+
+def _sorted_atom_groups(groups):
+    cleaned = [sorted(int(atom_idx) for atom_idx in group) for group in groups]
+    return sorted(cleaned, key=lambda group: (min(group), len(group)))
+
+
+def _fragment_atom_groups(mol, bond_indices):
+    bond_indices = list(dict.fromkeys(int(idx) for idx in bond_indices))
+    if not bond_indices:
+        return get_disconnected_atom_groups(mol)
+
+    fragmented = Chem.FragmentOnBonds(mol, bond_indices, addDummies=False)
+    groups = Chem.GetMolFrags(
+        fragmented,
+        asMols=False,
+        sanitizeFrags=False,
+    )
+    return _sorted_atom_groups(groups)
+
+
+def _is_valid_atom_partition(groups, num_atoms):
+    atom_indices = sorted(atom_idx for group in groups for atom_idx in group)
+    return atom_indices == list(range(num_atoms))
+
+
+def get_brics_atom_groups(smiles_or_mol):
+    mol = _as_rdkit_mol(smiles_or_mol)
+
+    bond_indices = []
+    for (begin_idx, end_idx), _labels in BRICS.FindBRICSBonds(mol):
+        bond = mol.GetBondBetweenAtoms(int(begin_idx), int(end_idx))
+        if bond is not None:
+            bond_indices.append(bond.GetIdx())
+
+    return _fragment_atom_groups(mol, bond_indices)
+
+
+def get_murcko_sidechain_atom_groups(smiles_or_mol):
+    mol = _as_rdkit_mol(smiles_or_mol)
+    scaffold = MurckoScaffold.GetScaffoldForMol(mol)
+
+    if scaffold is None or scaffold.GetNumAtoms() == 0:
+        return _whole_molecule_group(mol)
+
+    matches = mol.GetSubstructMatches(scaffold)
+    if not matches:
+        return _whole_molecule_group(mol)
+
+    scaffold_atoms = set(matches[0])
+    if len(scaffold_atoms) == mol.GetNumAtoms():
+        return _whole_molecule_group(mol)
+
+    bond_indices = []
+    for bond in mol.GetBonds():
+        begin_in_scaffold = bond.GetBeginAtomIdx() in scaffold_atoms
+        end_in_scaffold = bond.GetEndAtomIdx() in scaffold_atoms
+        if begin_in_scaffold != end_in_scaffold:
+            bond_indices.append(bond.GetIdx())
+
+    return _fragment_atom_groups(mol, bond_indices)
+
+
+def _is_cuttable_single_bond(bond, cut_hetero_bonds):
+    if bond.GetBondType() != Chem.BondType.SINGLE:
+        return False
+    if bond.IsInRing():
+        return False
+
+    begin_atom = bond.GetBeginAtom()
+    end_atom = bond.GetEndAtom()
+    begin_atomic_num = begin_atom.GetAtomicNum()
+    end_atomic_num = end_atom.GetAtomicNum()
+
+    if begin_atomic_num == 1 or end_atomic_num == 1:
+        return False
+    if not cut_hetero_bonds and (begin_atomic_num != 6 or end_atomic_num != 6):
+        return False
+
+    return True
+
+
+def _parts_after_adding_cut(mol, current_cuts, candidate_cut, source_group):
+    source_atoms = set(source_group)
+    groups_after_cut = _fragment_atom_groups(mol, [*current_cuts, candidate_cut])
+
+    parts = []
+    for group in groups_after_cut:
+        group_atoms = set(group)
+        if group_atoms and group_atoms.issubset(source_atoms):
+            parts.append(group)
+
+    if sum(len(group) for group in parts) != len(source_group):
+        return None
+
+    return parts
+
+
+def get_constrained_single_bond_atom_groups(
+    smiles_or_mol,
+    min_group_size=2,
+    min_groups=3,
+    max_groups=12,
+    max_group_size=8,
+    cut_hetero_bonds=False,
+):
+    mol = _as_rdkit_mol(smiles_or_mol)
+
+    if min_group_size < 1:
+        raise ValueError("min_group_size must be at least 1.")
+    if min_groups < 1:
+        raise ValueError("min_groups must be at least 1.")
+    if max_groups < 1:
+        raise ValueError("max_groups must be at least 1.")
+    if min_groups > max_groups:
+        raise ValueError("min_groups must be smaller than or equal to max_groups.")
+
+    cut_bonds = []
+    groups = get_disconnected_atom_groups(mol)
+
+    while len(groups) < max_groups:
+        oversized_groups = [
+            group
+            for group in groups
+            if max_group_size is not None and len(group) > max_group_size
+        ]
+
+        if oversized_groups:
+            groups_to_split = oversized_groups
+        elif len(groups) < min_groups:
+            groups_to_split = groups
+        else:
+            break
+
+        best_cut = None
+        best_score = None
+        existing_cuts = set(cut_bonds)
+
+        for group in groups_to_split:
+            if len(group) < 2 * min_group_size:
+                continue
+
+            group_atoms = set(group)
+            for bond in mol.GetBonds():
+                bond_idx = bond.GetIdx()
+                if bond_idx in existing_cuts:
+                    continue
+                if not _is_cuttable_single_bond(bond, cut_hetero_bonds):
+                    continue
+                if (
+                    bond.GetBeginAtomIdx() not in group_atoms
+                    or bond.GetEndAtomIdx() not in group_atoms
+                ):
+                    continue
+
+                parts = _parts_after_adding_cut(mol, cut_bonds, bond_idx, group)
+                if parts is None or len(parts) != 2:
+                    continue
+
+                sizes = [len(part) for part in parts]
+                if min(sizes) < min_group_size:
+                    continue
+
+                carbon_carbon = (
+                    bond.GetBeginAtom().GetAtomicNum() == 6
+                    and bond.GetEndAtom().GetAtomicNum() == 6
+                )
+                score = (
+                    int(max_group_size is not None and len(group) > max_group_size),
+                    len(group),
+                    min(sizes),
+                    -abs(sizes[0] - sizes[1]),
+                    int(carbon_carbon),
+                )
+
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_cut = bond_idx
+
+        if best_cut is None:
+            break
+
+        cut_bonds.append(best_cut)
+        groups = _fragment_atom_groups(mol, cut_bonds)
+
+    return groups
+
+
+def get_interpretability_atom_groups(
+    smiles_or_mol,
+    min_group_size=2,
+    min_groups=3,
+    max_groups=12,
+    max_group_size=8,
+    return_method=False,
+):
+    """
+    Build atom-index groups for group-level molecule explanations.
+
+    The strategy is:
+    1. Keep disconnected components, such as salts, as separate groups.
+    2. Use BRICS when it gives a compact, useful partition.
+    3. Use Murcko scaffold plus side chains for ring-containing molecules.
+    4. Fall back to constrained recursive single-bond cuts.
+
+    The fallback splits the largest eligible fragment first, which keeps long
+    acyclic chains as a few interpretable chunks instead of one group per bond.
+    """
+    mol = _as_rdkit_mol(smiles_or_mol)
+    num_atoms = mol.GetNumAtoms()
+
+    def finish(groups, method):
+        groups = _sorted_atom_groups(groups)
+        if not _is_valid_atom_partition(groups, num_atoms):
+            raise ValueError(f"{method} did not produce a valid atom partition.")
+        if return_method:
+            return groups, method
+        return groups
+
+    def is_preferred(groups):
+        if not _is_valid_atom_partition(groups, num_atoms):
+            return False
+        if len(groups) < min_groups or len(groups) > max_groups:
+            return False
+        if max_group_size is not None and max(len(group) for group in groups) > max_group_size:
+            return False
+        return True
+
+    candidate_partitions = []
+
+    disconnected_groups = get_disconnected_atom_groups(mol)
+    if len(disconnected_groups) > 1:
+        if len(disconnected_groups) <= max_groups:
+            candidate_partitions.append(("disconnected_components", disconnected_groups))
+        if (
+            len(disconnected_groups) <= max_groups
+            and (
+                max_group_size is None
+                or max(len(group) for group in disconnected_groups) <= max_group_size
+            )
+        ):
+            return finish(disconnected_groups, "disconnected_components")
+
+    for method, group_fn in (
+        ("brics", get_brics_atom_groups),
+        ("murcko_sidechains", get_murcko_sidechain_atom_groups),
+    ):
+        groups = group_fn(mol)
+        if len(groups) > 1 and len(groups) <= max_groups:
+            candidate_partitions.append((method, groups))
+        if is_preferred(groups):
+            return finish(groups, method)
+
+    for cut_hetero_bonds, method in (
+        (False, "constrained_cc_single_bonds"),
+        (True, "constrained_heavy_single_bonds"),
+    ):
+        groups = get_constrained_single_bond_atom_groups(
+            mol,
+            min_group_size=min_group_size,
+            min_groups=min_groups,
+            max_groups=max_groups,
+            max_group_size=max_group_size,
+            cut_hetero_bonds=cut_hetero_bonds,
+        )
+        if len(groups) > 1 and len(groups) <= max_groups:
+            candidate_partitions.append((method, groups))
+        if is_preferred(groups):
+            return finish(groups, method)
+
+    if candidate_partitions:
+        method, groups = max(
+            candidate_partitions,
+            key=lambda item: (
+                min(len(item[1]), max_groups),
+                -max(len(group) for group in item[1]),
+            ),
+        )
+        return finish(groups, method)
+
+    return finish(_whole_molecule_group(mol), "whole_molecule")
+
+
+def group_scores_to_atom_scores(
+    groups,
+    group_scores,
+    num_atoms,
+    normalize_by_group_size=False,
+):
+    if isinstance(group_scores, torch.Tensor):
+        group_scores = group_scores.detach().cpu().numpy()
+    else:
+        group_scores = np.asarray(group_scores)
+
+    group_scores = group_scores.astype(float).reshape(-1)
+    if len(groups) != group_scores.shape[0]:
+        raise ValueError(
+            f"Expected one score per group: got {group_scores.shape[0]} scores "
+            f"for {len(groups)} groups."
+        )
+
+    atom_scores = np.zeros(num_atoms, dtype=float)
+    assigned = np.zeros(num_atoms, dtype=bool)
+
+    for group_idx, atom_indices in enumerate(groups):
+        if isinstance(atom_indices, torch.Tensor):
+            atom_indices = atom_indices.detach().cpu().numpy()
+        atom_indices = np.asarray(atom_indices, dtype=int)
+        if atom_indices.size == 0:
+            raise ValueError(f"Group {group_idx} has no atoms.")
+        if atom_indices.min() < 0 or atom_indices.max() >= num_atoms:
+            raise ValueError(
+                f"Group {group_idx} contains atom indices outside 0..{num_atoms - 1}."
+            )
+        if assigned[atom_indices].any():
+            raise ValueError("Atom groups must not overlap.")
+
+        score = group_scores[group_idx]
+        if normalize_by_group_size:
+            score = score / atom_indices.size
+
+        atom_scores[atom_indices] = score
+        assigned[atom_indices] = True
+
+    if not assigned.all():
+        missing = np.flatnonzero(~assigned).tolist()
+        raise ValueError(f"Atom groups do not cover all atoms. Missing atoms: {missing}")
+
+    return atom_scores
+
+
 def draw_atom_shapley_heatmap_gaussian(
     smiles,
     shapley_scores,
@@ -458,7 +894,7 @@ def draw_atom_shapley_heatmap_gaussian(
 
     if atom_scores.shape[0] != mol.GetNumAtoms():
         raise ValueError(
-            f"Expected {mol.GetNumAtoms()} Shapley scores, "
+            f"Expected {mol.GetNumAtoms()} atom Shapley scores, "
             f"got {atom_scores.shape[0]}."
         )
 
@@ -555,6 +991,34 @@ def draw_atom_shapley_heatmap_gaussian(
     plt.show()
 
     return atom_scores
+
+
+def draw_group_shapley_heatmap_gaussian(
+    smiles,
+    groups,
+    group_shapley_scores,
+    normalize_by_group_size=False,
+    **kwargs,
+):
+    """
+    Draw group-level Shapley scores over the atoms belonging to each group.
+
+    By default, every atom in a group receives that group's total Shapley score
+    for display. Set normalize_by_group_size=True to split the group score
+    evenly across its atoms.
+    """
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"Could not parse SMILES: {smiles}")
+
+    atom_scores = group_scores_to_atom_scores(
+        groups,
+        group_shapley_scores,
+        mol.GetNumAtoms(),
+        normalize_by_group_size=normalize_by_group_size,
+    )
+
+    return draw_atom_shapley_heatmap_gaussian(smiles, atom_scores, **kwargs)
 
 def predict_graph(model, graph, device):
     g = graph.clone()
