@@ -21,6 +21,7 @@ args = parser.parse_args()
 fold_id = args.fold
 seed = args.seed
 experiment_name = args.experiment_name
+print(f"Using fold_id: {fold_id}")
 print(f"Using seed: {seed}")
 print(f"Using experiment_name: {experiment_name}")
 
@@ -33,7 +34,7 @@ torch.cuda.manual_seed_all(args.seed)
 # # Hyperparameters
 
 USE_WANDB = True
-n_folds = 5
+n_folds = 10
 
 # N_SAMPLES = 100
 N_SAMPLES = None
@@ -198,7 +199,7 @@ BOND_FEATURES = (
     "stereo",
 )
 
-graph_featurizer = GraphFeaturizer(ATOM_FEATURES, BOND_FEATURES)
+graph_featurizer = GraphFeaturizer(ATOM_FEATURES, BOND_FEATURES, add_virtual_edges=False)
 
 df_processed["features"] = df_processed["SMILES"].apply(graph_featurizer.featurize)
 
@@ -317,9 +318,16 @@ print(f"Unique groups: {groups.nunique():,}")
 print(f"Missing group values: {groups.isna().sum():,}")
 print(f"Fallback missing-cluster groups: {groups.str.startswith('__missing__::').sum():,}")
 
+group_kfold = GroupKFold(n_splits=n_folds)
+
+splits = list(group_kfold.split(graphs, groups=groups))
+
+train_idx, val_idx = splits[fold_id]
+
 train_dataset = _build_dataset(graphs, train_idx)
 val_dataset = _build_dataset(graphs, val_idx)
 test_dataset = None
+
 
 
 # Build DataLoaders
@@ -357,14 +365,11 @@ if test_dataset is not None:
 
 # Build model
 
-from src.models.gcn import GCN
-from src.models.gatv2 import GATv2
 from src.models.pna import PNA, PNA_1_5M_CONFIG, compute_pna_degree_histogram
-from src.models.grapefruit import Grapefruit
-from src.models.grapefruitsp import GrapefruitSP
 from src.models.toxicity_model import ToxicityModel
+from src.models.meta_encoder import MetaEncoder, TaxonomyOneHot
 from src.models.attentive_fp import AttentiveFP
-from src.models.meta_encoder import MetaEncoder, TaxonomyEncoder, TaxonomyOneHot
+from src.models.afpGAT import AFPGAT
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -376,11 +381,11 @@ CATEGORICAL_DIM = 128
 NUMERIC_DIM = 128
 META_DROPOUT = 0.3
 
-GNN_HIDDEN_DIM = 256
+GNN_HIDDEN_DIM = 512
 GNN_OUT_DIM = 512
 TOWERS = 4
 
-NUM_LAYERS = 3
+NUM_LAYERS = 4
 NUM_TIMESTEPS = 2
 DROPOUT = 0.3
 
@@ -406,31 +411,15 @@ def build_model():
 
     pna_deg = compute_pna_degree_histogram(train_dataset)
 
-    model_gnn = Grapefruit(
+    model_gnn = AFPGAT(
         in_channels=ATOM_FEATURE_DIM,
         edge_dim=EDGE_FEATURE_DIM,
-        virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
         hidden_dim=GNN_HIDDEN_DIM,
-        towers=TOWERS,
-        deg=pna_deg,
         out_dim=GNN_OUT_DIM,
         num_layers=NUM_LAYERS,
         num_timesteps=NUM_TIMESTEPS,
         dropout=DROPOUT,
     ).to(device)
-
-    # model_gnn = Grapefruit(
-    #     in_channels=ATOM_FEATURE_DIM,
-    #     edge_dim=EDGE_FEATURE_DIM,
-    #     virtual_edge_dim=VIRTUAL_EDGE_FEATURE_DIM,
-    #     hidden_dim=GNN_HIDDEN_DIM,
-    #     towers=TOWERS,
-    #     deg=pna_deg,
-    #     out_dim=GNN_OUT_DIM,
-    #     num_layers=NUM_LAYERS,
-    #     num_timesteps=NUM_TIMESTEPS,
-    #     dropout=DROPOUT,
-    # ).to(device)
 
     # model_gnn = None
 
@@ -534,7 +523,7 @@ run_config = {
     "train_sampler_type": "weighted",
     "val_sampler_type": "sequential",
     "taxonomy_encoder": TaxonomyOneHot.__name__,
-    "gnn_model": f"{gnn_name}-9M-150",
+    "gnn_model": f"{gnn_name}-16M-10f",
     "pretrained_tax_dim": PRETRAINED_TAX_DIM,
     "pretrained_taxid_output_dim": PRETRAINED_TAXID_OUTPUT_DIM,
     "categorical_dim": CATEGORICAL_DIM,
@@ -722,11 +711,10 @@ if wandb_run is not None:
         }
     )
 
-
-checkpoint_dir = PROJECT_ROOT / "outputs" / "models"
+checkpoint_dir = PROJECT_ROOT / "outputs" / "models" / "afpGAT-16M"
 checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-checkpoint_path = checkpoint_dir / f"{gnn_name}-9M-150-fold{fold_id}.pt"
+checkpoint_path = checkpoint_dir / f"{gnn_name}-16M-fold{fold_id}.pt"
 
 torch.save(
     {
