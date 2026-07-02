@@ -1,4 +1,6 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
-}
+    "python.defaultInterpreterPath": "/cephyr/users/vollmers/Alvis/vollmers/gnn-thesis/bin/python",
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "python-envs.defaultPackageManager": "ms-python.python:pip",
+    "jupyter.kernels.filter": []
+  }
